@@ -1,0 +1,13 @@
+-- AlterTable
+ALTER TABLE "RateioCampo" ALTER COLUMN "parcela" DROP NOT NULL,
+ALTER COLUMN "parcelas" DROP NOT NULL;
+
+-- AlterTable
+ALTER TABLE "RateioUnidadeDado" ALTER COLUMN "parcela" DROP NOT NULL,
+ALTER COLUMN "parcelas" DROP NOT NULL;
+
+-- AlterTable
+ALTER TABLE "Rateios" ALTER COLUMN "totalValue" DROP NOT NULL,
+ALTER COLUMN "dueDate" DROP NOT NULL,
+ALTER COLUMN "intakeDate" DROP NOT NULL,
+ALTER COLUMN "sentDate" DROP NOT NULL;
