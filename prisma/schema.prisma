@@ -1,0 +1,360 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+}
+
+enum AuditEvent {
+  LOGIN_SUCCESS
+  LOGIN_FAIL
+  LOGOUT
+  PASSWORD_RESET_REQUEST
+  PASSWORD_RESET_SUCCESS
+  USER_CREATED
+  USER_ROLE_CHANGED
+  INVITE_CREATED
+  INVITE_USED
+}
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  passwordHash     String
+  role             UserRole  @default(OPERATOR)
+  isActive         Boolean   @default(true)
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  accounts            Account[]
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  auditLogs           AuditLog[]
+  createdInviteTokens InviteToken[]       @relation("InviteCreator")
+  balanceteJobs       BalanceteJob[]
+}
+
+enum BalanceteJobStatus {
+  RECEIVED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model BalanceteJob {
+  id             String              @id @default(cuid())
+  userId         String
+  status         BalanceteJobStatus  @default(RECEIVED)
+  originalName   String
+  pdfPath        String
+  xlsxPath       String?
+  summary        Json?
+  issues         Json?
+  errorMessage   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  userId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model InviteToken {
+  id              String    @id @default(cuid())
+  tokenHash       String    @unique
+  role            UserRole
+  expiresAt       DateTime
+  usedAt          DateTime?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+
+  createdByUser User? @relation("InviteCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([createdByUserId, expiresAt])
+}
+
+model AuditLog {
+  id        String    @id @default(cuid())
+  event     AuditEvent
+  userId    String?
+  ip        String?
+  userAgent String?
+  metadata  Json?
+  createdAt DateTime  @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([event, createdAt])
+  @@index([userId, createdAt])
+}
+
+model RateLimitBucket {
+  id          String   @id @default(cuid())
+  bucketKey   String   @unique
+  count       Int      @default(0)
+  windowStart DateTime
+  blockedUntil DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([blockedUntil])
+}
+
+model Condominio {
+  id         String    @id @default(cuid())
+  externalId String    @unique
+  nome       String
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  unidades         Unidade[]
+  rateios          Rateios[]
+  itensRateio      ItensRateio[]
+  rateioPendencias RateioPendencia[]
+}
+
+model Unidade {
+  id           String    @id @default(cuid())
+  condominioId String
+  externalId   String    @unique
+  bloco        String?
+  unidade      String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  condominio       Condominio        @relation(fields: [condominioId], references: [id])
+  rateioUnidades   RateioUnidade[]
+  rateioPendencias RateioPendencia[]
+}
+
+enum RateioStatus {
+  RECEIVED
+  PARSED
+  VALIDATED
+  SENT
+  FAILED
+}
+
+model Rateios {
+  id           String    @id @default(cuid())
+  condominioId String
+  competencia  Int
+  tabela       Int       @default(0)
+  totalValue   Float?
+  dueDate      DateTime?
+  intakeDate   DateTime?
+  sentDate     DateTime?
+
+  status RateioStatus @default(RECEIVED)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  condominio       Condominio        @relation(fields: [condominioId], references: [id])
+  rateioUnidades   RateioUnidade[]
+  rateioCampos     RateioCampo[]
+  rateioArquivos   RateioArquivo[]
+  rateioPendencias RateioPendencia[]
+}
+
+model RateioUnidade {
+  id        String @id @default(cuid())
+  rateioId  String
+  unidadeId String
+  value     Float
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  rateio             Rateios             @relation(fields: [rateioId], references: [id])
+  unidade            Unidade             @relation(fields: [unidadeId], references: [id])
+  rateioUnidadeDados RateioUnidadeDado[]
+}
+
+model RateioCampo {
+  id       String @id @default(cuid())
+  rateioId String
+  ordem    Int
+  item     Int
+
+  antecipa Boolean?
+  repassa  Boolean?
+
+  parcela  Int?
+  parcelas Int?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  rateio Rateios @relation(fields: [rateioId], references: [id])
+
+  @@unique([rateioId, ordem])
+}
+
+model RateioUnidadeDado {
+  id              String @id @default(cuid())
+  rateioUnidadeId String
+
+  ordem Int
+  valor Float
+
+  parcela  Int?
+  parcelas Int?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  rateioUnidade RateioUnidade @relation(fields: [rateioUnidadeId], references: [id])
+}
+
+model RateioArquivo {
+  id       String @id @default(cuid())
+  rateioId String
+
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  sha256       String
+
+  storage String
+  path    String
+
+  source      String?
+  externalRef String?
+
+  createdAt DateTime @default(now())
+
+  rateio Rateios @relation(fields: [rateioId], references: [id], onDelete: Cascade)
+
+  @@index([sha256])
+}
+
+model ItensRateio {
+  id             String   @id @default(cuid())
+  condominioId   String
+
+  item           Int
+  externalId     String?
+  descricao      String
+  opcoes         String[]
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  condominio     Condominio @relation(fields: [condominioId], references: [id])
+
+  @@unique([condominioId, item])
+  @@index([condominioId, externalId])
+}
+
+model RateioPendencia {
+  id           String @id @default(cuid())
+  rateioId     String
+  condominioId String
+
+  unidadeId String?
+
+  scope PendenciaScope @default(UNIT)
+
+  rawDesc  String
+  normDesc String
+
+  exampleValue Float?
+  occurrences  Int    @default(1)
+
+  status        PendenciaStatus @default(OPEN)
+  suggestedItem Int?
+  resolvedItem  Int?
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  resolvedAt DateTime?
+
+  rateio     Rateios    @relation(fields: [rateioId], references: [id], onDelete: Cascade)
+  condominio Condominio @relation(fields: [condominioId], references: [id], onDelete: Cascade)
+  unidade    Unidade?   @relation(fields: [unidadeId], references: [id], onDelete: SetNull)
+
+  @@unique([rateioId, normDesc], name: "rateioId_normDesc")
+  @@unique([rateioId, unidadeId, normDesc], name: "rateioId_unidadeId_normDesc")
+  @@index([condominioId, status])
+}
+
+enum PendenciaStatus {
+  OPEN
+  RESOLVED
+  IGNORED
+}
+
+enum PendenciaScope {
+  UNIT
+  CONDOMINIO
+}
+
