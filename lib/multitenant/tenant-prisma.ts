@@ -1,5 +1,5 @@
-// lib/tenant-prisma.ts
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 import type { TenantConfig } from "./tenant-resolver";
 
 const prismaCache = new Map<string, PrismaClient>();
@@ -20,10 +20,11 @@ export function getTenantPrisma(tenant: TenantConfig) {
   const existing = prismaCache.get(cacheKey);
   if (existing) return existing;
 
-  const databaseUrl = buildTenantDatabaseUrl(tenant);
+  const connectionString = buildTenantDatabaseUrl(tenant);
+  const adapter = new PrismaPg({ connectionString });
 
   const prisma = new PrismaClient({
-    datasourceUrl: databaseUrl,
+    adapter,
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 
