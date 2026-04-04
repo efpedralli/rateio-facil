@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { AuthGuardError, requireRole } from "@/lib/auth";
-import { UserRole, prisma } from "@/lib/prisma";
+import { UserRole } from "@prisma/client";
+import { getTenantContext } from "@/lib/multitenant";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,8 @@ function authErrorToResponse(error: unknown) {
 export async function GET() {
   try {
     await requireRole([UserRole.ADMIN, UserRole.OPERATOR]);
+
+    const { prisma } = await getTenantContext();
 
     const condominios = await prisma.condominio.findMany({
       where: { deletedAt: null },
