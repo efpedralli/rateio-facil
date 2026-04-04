@@ -26,6 +26,8 @@ export type TenantConfig = {
   active: boolean;
 };
 
+const LOCAL_FALLBACK_HOST = "dupliquedesembargador.nyaia.ia.br";
+
 function normalizeHost(host?: string | null) {
   if (!host) return "";
   return host.split(":")[0].trim().toLowerCase();
@@ -37,7 +39,12 @@ export async function getTenantByHost(rawHost?: string | null) {
   const host = normalizeHost(rawHost);
   if (!host) return null;
 
-  const cached = tenantCache.get(host);
+  const effectiveHost =
+    host === "localhost" || host === "127.0.0.1"
+      ? LOCAL_FALLBACK_HOST
+      : host;
+
+  const cached = tenantCache.get(effectiveHost);
   if (cached) return cached;
 
   const { rows } = await controlPool.query<TenantConfig>(
@@ -48,11 +55,11 @@ export async function getTenantByHost(rawHost?: string | null) {
         AND active = true
       LIMIT 1
     `,
-    [host]
+    [effectiveHost]
   );
 
   const tenant = rows[0] ?? null;
-  if (tenant) tenantCache.set(host, tenant);
+  if (tenant) tenantCache.set(effectiveHost, tenant);
 
   return tenant;
 }
@@ -62,5 +69,12 @@ export function clearTenantCache(host?: string) {
     tenantCache.clear();
     return;
   }
-  tenantCache.delete(normalizeHost(host));
+
+  const normalized = normalizeHost(host);
+  const effectiveHost =
+    normalized === "localhost" || normalized === "127.0.0.1"
+      ? LOCAL_FALLBACK_HOST
+      : normalized;
+
+  tenantCache.delete(effectiveHost);
 }
