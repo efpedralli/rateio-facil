@@ -2,19 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import fs from "fs/promises";
 import path from "path";
-import { authOptions } from "@/lib/auth";
+import { createAuthOptions } from "@/lib/auth";
 import { getTenantContext } from "@/lib/multitenant";
 
 export const runtime = "nodejs";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const session = await getServerSession(authOptions);
+  const { prisma } = await getTenantContext();
+  const session = await getServerSession(createAuthOptions(prisma));
   if (!session?.user?.id) {
     return NextResponse.json({ ok: false, error: "Não autenticado." }, { status: 401 });
   }
 
   const { id } = await ctx.params;
-  const { prisma } = await getTenantContext();
   const job = await prisma.balanceteJob.findFirst({
     where: { id, userId: session.user.id },
   });

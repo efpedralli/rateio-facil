@@ -15,9 +15,8 @@ function authErrorToResponse(error: unknown) {
 
 export async function GET() {
   try {
-    await requireRole([UserRole.ADMIN, UserRole.OPERATOR]);
-
     const { prisma } = await getTenantContext();
+    await requireRole(prisma, [UserRole.ADMIN, UserRole.OPERATOR]);
 
     const condominios = await prisma.condominio.findMany({
       where: { deletedAt: null },

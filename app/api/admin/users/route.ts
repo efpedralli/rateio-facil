@@ -16,9 +16,8 @@ function authErrorToResponse(error: unknown) {
 
 export async function GET() {
   try {
-    await requireRole([UserRole.ADMIN]);
-
     const { prisma } = await getTenantContext();
+    await requireRole(prisma, [UserRole.ADMIN]);
     const users = await prisma.user.findMany({
       select: {
         id: true,
@@ -40,8 +39,8 @@ export async function GET() {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const session = await requireRole([UserRole.ADMIN]);
     const { prisma } = await getTenantContext();
+    const session = await requireRole(prisma, [UserRole.ADMIN]);
     const body = (await req.json()) as { userId?: string; role?: UserRole };
 
     const userId = String(body.userId ?? "");

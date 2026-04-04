@@ -23,13 +23,13 @@ function getSessionToken(req: NextRequest): string | null {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getAuthSession();
+  const { prisma } = await getTenantContext();
+  const session = await getAuthSession(prisma);
   const sessionToken = getSessionToken(req);
   const ip = getClientIp(req);
   const userAgent = getUserAgent(req);
 
   if (sessionToken) {
-    const { prisma } = await getTenantContext();
     await prisma.session.deleteMany({
       where: { sessionToken },
     });

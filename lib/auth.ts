@@ -2,7 +2,8 @@ import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import type { NextAuthOptions, Session } from "next-auth";
 import { getServerSession } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { AuditEvent, UserRole, prisma } from "@/lib/prisma";
+import type { PrismaClient } from "@prisma/client";
+import { AuditEvent, UserRole } from "@prisma/client";
 import { getClientIp, getUserAgent } from "@/lib/request";
 import { writeAudit } from "@/lib/audit";
 import { getRateLimitBlock, hitRateLimit } from "@/lib/security/rateLimit";
@@ -30,6 +31,7 @@ type CredentialsAuthResult = {
 };
 
 export async function authenticateCredentials(
+  prisma: PrismaClient,
   input: CredentialsAuthInput
 ): Promise<CredentialsAuthResult | null> {
   const email = input.email.trim().toLowerCase();
@@ -139,7 +141,6 @@ export async function authenticateCredentials(
         lastLoginAt: now,
       },
     }),
-    // Ensures a fresh database session is created at each sign-in.
     prisma.session.deleteMany({
       where: { userId: user.id },
     }),
@@ -158,70 +159,72 @@ export async function authenticateCredentials(
   };
 }
 
-export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma),
-  session: {
-    strategy: "database",
-    maxAge: SESSION_MAX_AGE_SECONDS,
-    updateAge: 60 * 60 * 24,
-  },
-  secret: process.env.NEXTAUTH_SECRET,
-  pages: {
-    signIn: "/login",
-  },
-  cookies: {
-    sessionToken: {
-      name: SESSION_COOKIE_NAME,
-      options: {
-        httpOnly: true,
-        sameSite: "lax",
-        path: "/",
-        secure: isProd,
+export function createAuthOptions(prisma: PrismaClient): NextAuthOptions {
+  return {
+    adapter: PrismaAdapter(prisma),
+    session: {
+      strategy: "database",
+      maxAge: SESSION_MAX_AGE_SECONDS,
+      updateAge: 60 * 60 * 24,
+    },
+    secret: process.env.NEXTAUTH_SECRET,
+    pages: {
+      signIn: "/login",
+    },
+    cookies: {
+      sessionToken: {
+        name: SESSION_COOKIE_NAME,
+        options: {
+          httpOnly: true,
+          sameSite: "lax",
+          path: "/",
+          secure: isProd,
+        },
       },
     },
-  },
-  providers: [
-    CredentialsProvider({
-      name: "Email and Password",
-      credentials: {
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" },
+    providers: [
+      CredentialsProvider({
+        name: "Email and Password",
+        credentials: {
+          email: { label: "Email", type: "email" },
+          password: { label: "Password", type: "password" },
+        },
+        async authorize(credentials, req) {
+          return authenticateCredentials(prisma, {
+            email: String(credentials?.email ?? ""),
+            password: String(credentials?.password ?? ""),
+            headers: req.headers ?? {},
+          });
+        },
+      }),
+    ],
+    callbacks: {
+      async session({ session, user }) {
+        if (session.user) {
+          session.user.id = user.id;
+          const dbUser = await prisma.user.findUnique({
+            where: { id: user.id },
+            select: { role: true },
+          });
+          session.user.role = dbUser?.role ?? UserRole.OPERATOR;
+        }
+        return session;
       },
-      async authorize(credentials, req) {
-        return authenticateCredentials({
-          email: String(credentials?.email ?? ""),
-          password: String(credentials?.password ?? ""),
-          headers: req.headers ?? {},
+    },
+    events: {
+      async signOut(message) {
+        const session = "session" in message ? message.session : undefined;
+        if (!session) return;
+        await writeAudit(AuditEvent.LOGOUT, {
+          metadata: { email: session.user?.email ?? null },
         });
       },
-    }),
-  ],
-  callbacks: {
-    async session({ session, user }) {
-      if (session.user) {
-        session.user.id = user.id;
-        const dbUser = await prisma.user.findUnique({
-          where: { id: user.id },
-          select: { role: true },
-        });
-        session.user.role = dbUser?.role ?? UserRole.OPERATOR;
-      }
-      return session;
     },
-  },
-  events: {
-    async signOut(message) {
-      const session = "session" in message ? message.session : undefined;
-      if (!session) return;
-      await writeAudit(AuditEvent.LOGOUT, {
-        metadata: { email: session.user?.email ?? null },
-      });
-    },
-  },
-};
+  };
+}
 
-export async function getAuthSession() {
-  return getServerSession(authOptions);
+export async function getAuthSession(prisma: PrismaClient) {
+  return getServerSession(createAuthOptions(prisma));
 }
 
 export class AuthGuardError extends Error {
@@ -238,16 +241,16 @@ export type AuthedSession = Session & {
   user: NonNullable<Session["user"]> & { id: string };
 };
 
-export async function requireAuth(): Promise<AuthedSession> {
-  const session = await getAuthSession();
+export async function requireAuth(prisma: PrismaClient): Promise<AuthedSession> {
+  const session = await getAuthSession(prisma);
   if (!session?.user?.id) {
     throw new AuthGuardError("Unauthorized", 401);
   }
   return session as AuthedSession;
 }
 
-export async function requireRole(roles: UserRole[]) {
-  const session = await requireAuth();
+export async function requireRole(prisma: PrismaClient, roles: UserRole[]) {
+  const session = await requireAuth(prisma);
   if (!session.user.role || !roles.includes(session.user.role)) {
     throw new AuthGuardError("Forbidden", 403);
   }

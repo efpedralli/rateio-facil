@@ -2,7 +2,8 @@ import crypto from "crypto";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth";
-import { AuditEvent, UserRole, prisma } from "@/lib/prisma";
+import { AuditEvent, UserRole } from "@prisma/client";
+import { getTenantContext } from "@/lib/multitenant";
 import { getClientIp, getUserAgent } from "@/lib/request";
 import { writeAudit } from "@/lib/audit";
 
@@ -16,7 +17,8 @@ const INVITE_TTL_MS = 24 * 60 * 60 * 1000;
 async function createInviteAction() {
   "use server";
 
-  const session = await requireRole([UserRole.ADMIN]);
+  const { prisma } = await getTenantContext();
+  const session = await requireRole(prisma, [UserRole.ADMIN]);
   const hdrs = await headers();
   const rawToken = crypto.randomBytes(INVITE_TOKEN_BYTES).toString("hex");
   const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
@@ -42,8 +44,9 @@ async function createInviteAction() {
 
 export default async function AdminUsersPage({ searchParams }: AdminUsersPageProps) {
   const params = await searchParams;
+  const { prisma } = await getTenantContext();
   try {
-    await requireRole([UserRole.ADMIN]);
+    await requireRole(prisma, [UserRole.ADMIN]);
   } catch {
     redirect("/login");
   }

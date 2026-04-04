@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import fs from "fs/promises";
 import path from "path";
-import { authOptions } from "@/lib/auth";
+import { createAuthOptions } from "@/lib/auth";
 import { Prisma } from "@prisma/client";
 import { getTenantContext } from "@/lib/multitenant";
 import { processBalanceteJob } from "@/lib/balancete/engine";
@@ -17,7 +17,8 @@ async function ensureDir(dir: string) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions);
+  const { prisma } = await getTenantContext();
+  const session = await getServerSession(createAuthOptions(prisma));
   if (!session?.user?.id) {
     return NextResponse.json({ ok: false, error: "Não autenticado." }, { status: 401 });
   }
@@ -49,7 +50,6 @@ export async function POST(req: NextRequest) {
   const bytes = Buffer.from(await file.arrayBuffer());
   await fs.writeFile(absPdf, bytes);
 
-  const { prisma } = await getTenantContext();
   await prisma.balanceteJob.create({
     data: {
       id: jobId,

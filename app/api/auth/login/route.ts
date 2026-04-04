@@ -22,7 +22,8 @@ export async function POST(req: NextRequest) {
   const password = String(formData.get("password") ?? "");
   const callbackUrl = safeCallbackUrl(String(formData.get("callbackUrl") ?? "/dashboard"));
 
-  const authenticated = await authenticateCredentials({
+  const { prisma } = await getTenantContext();
+  const authenticated = await authenticateCredentials(prisma, {
     email,
     password,
     headers: req.headers,
@@ -38,7 +39,6 @@ export async function POST(req: NextRequest) {
   const sessionToken = crypto.randomBytes(32).toString("hex");
   const expires = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
 
-  const { prisma } = await getTenantContext();
   await prisma.session.create({
     data: {
       sessionToken,

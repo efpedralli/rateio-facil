@@ -20,10 +20,9 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireRole([UserRole.ADMIN, UserRole.OPERATOR]);
-    const { id } = await ctx.params;
-
     const { prisma } = await getTenantContext();
+    await requireRole(prisma, [UserRole.ADMIN, UserRole.OPERATOR]);
+    const { id } = await ctx.params;
     const rateio = await prisma.rateios.findUnique({
       where: { id },
       include: { rateioArquivos: true },

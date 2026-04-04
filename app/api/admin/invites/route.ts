@@ -20,8 +20,8 @@ function authErrorToResponse(error: unknown) {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await requireRole([UserRole.ADMIN]);
     const { prisma } = await getTenantContext();
+    const session = await requireRole(prisma, [UserRole.ADMIN]);
     const rawToken = crypto.randomBytes(INVITE_TOKEN_BYTES).toString("hex");
     const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
 
