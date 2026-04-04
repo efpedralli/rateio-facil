@@ -1,5 +1,5 @@
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
-import type { NextAuthOptions } from "next-auth";
+import type { NextAuthOptions, Session } from "next-auth";
 import { getServerSession } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { AuditEvent, UserRole, prisma } from "@/lib/prisma";
@@ -234,12 +234,16 @@ export class AuthGuardError extends Error {
   }
 }
 
-export async function requireAuth() {
+export type AuthedSession = Session & {
+  user: NonNullable<Session["user"]> & { id: string };
+};
+
+export async function requireAuth(): Promise<AuthedSession> {
   const session = await getAuthSession();
   if (!session?.user?.id) {
     throw new AuthGuardError("Unauthorized", 401);
   }
-  return session;
+  return session as AuthedSession;
 }
 
 export async function requireRole(roles: UserRole[]) {
