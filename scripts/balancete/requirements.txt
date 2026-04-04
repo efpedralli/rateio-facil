@@ -1,2 +1,6 @@
+# Balancete: pipeline semântico + pacote leitor_balancete (extração/normalização CSV|XLSX offline).
 pdfplumber>=0.11.0
+pandas>=2.0.0
 openpyxl>=3.1.0
+xlrd>=2.0.0
+click>=8.1.0

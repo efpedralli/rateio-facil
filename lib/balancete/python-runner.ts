@@ -78,8 +78,6 @@ export async function runBalanceteParser(pdfAbsPath: string, fileName: string): 
 }
 
 /**
- * Alias do contrato solicitado: hoje parse + transformação canônica ocorrem no mesmo script Python
- * (`transform_balancete` + `parse_balancete_pdf`). Se no futuro a transformação for separada,
- * este método pode apontar para outro executável sem mudar o restante do engine.
+ * Alias: parse PDF → JSON canônico num único script (`parse_balancete_pdf.py` + leitor_balancete).
  */
 export const runBalanceteTransformation = runBalanceteParser;

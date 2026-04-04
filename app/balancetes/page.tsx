@@ -16,6 +16,9 @@ export default async function BalancetesPage() {
   }
 
   return (
-    <BalanceteClient userRole={session.user.role} userEmail={session.user.email ?? ""} />
+    <BalanceteClient
+      userRole={session.user.role ?? UserRole.OPERATOR}
+      userEmail={session.user.email ?? ""}
+    />
   );
 }

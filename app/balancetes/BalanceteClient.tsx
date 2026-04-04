@@ -35,6 +35,23 @@ function coerceIssues(raw: unknown): BalanceteValidationIssue[] {
   return raw.filter(Boolean) as BalanceteValidationIssue[];
 }
 
+async function downloadBalanceteXlsx(url: string, fileName: string): Promise<void> {
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) {
+    throw new Error("Não foi possível baixar o XLSX automaticamente.");
+  }
+  const blob = await res.blob();
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = fileName;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(href);
+}
+
 export default function BalanceteClient({ userRole, userEmail }: Props) {
   const [pageState, setPageState] = useState<PageState>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -98,6 +115,19 @@ export default function BalanceteClient({ userRole, userEmail }: Props) {
       setIssues(coerceIssues(payload.issues));
       setDownloadUrl(payload.downloadUrl ?? null);
       setJobId(payload.id ?? null);
+
+      if (payload.downloadUrl) {
+        const baseName = file.name.replace(/\.pdf$/i, "") || "balancete";
+        try {
+          await downloadBalanceteXlsx(
+            payload.downloadUrl,
+            `${baseName}_importacao.xlsx`
+          );
+        } catch (dlErr) {
+          console.error("[balancetes] download automático:", dlErr);
+        }
+      }
+
       setPageState("done");
     } catch (e) {
       const message = e instanceof Error ? e.message : "Erro inesperado.";
