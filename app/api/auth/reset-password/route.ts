@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { AuditEvent, prisma } from "@/lib/prisma";
+import { AuditEvent } from "@prisma/client";
+import { getTenantContext } from "@/lib/multitenant";
 import { writeAudit } from "@/lib/audit";
 import { getClientIp, getUserAgent } from "@/lib/request";
 import { hashPassword, validatePasswordStrength } from "@/lib/security/password";
@@ -35,6 +36,7 @@ export async function POST(req: NextRequest) {
   const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
   const now = new Date();
 
+  const { prisma } = await getTenantContext();
   const resetToken = await prisma.passwordResetToken.findFirst({
     where: {
       tokenHash,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AuditEvent, prisma } from "@/lib/prisma";
+import { AuditEvent } from "@prisma/client";
+import { getTenantContext } from "@/lib/multitenant";
 import { getAuthSession } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { getClientIp, getUserAgent } from "@/lib/request";
@@ -28,6 +29,7 @@ export async function POST(req: NextRequest) {
   const userAgent = getUserAgent(req);
 
   if (sessionToken) {
+    const { prisma } = await getTenantContext();
     await prisma.session.deleteMany({
       where: { sessionToken },
     });

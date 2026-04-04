@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getTenantContext } from "@/lib/multitenant";
 import crypto from "crypto";
 import path from "path";
 import fs from "fs/promises";
@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
 
   const competencia = Number(competenciaStr);
   const tabela = Number(tabelaStr || 0);
+  const { prisma } = await getTenantContext();
   const condominio = await prisma.condominio.findFirst({
     where: {
       OR: [{ id: condominioId }, { externalId: condominioId }],

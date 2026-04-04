@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getTenantContext } from "@/lib/multitenant";
 import { launchRateioVouch } from "@/lib/vouch/submit-rateio";
 
 export const runtime = "nodejs";
@@ -11,6 +11,7 @@ export async function POST(
   try {
     const { id } = await ctx.params;
 
+    const { prisma } = await getTenantContext();
     const rateio = await prisma.rateios.findUnique({
       where: { id },
       include: {

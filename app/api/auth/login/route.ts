@@ -5,7 +5,7 @@ import {
   SESSION_MAX_AGE_SECONDS,
   authenticateCredentials,
 } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { getTenantContext } from "@/lib/multitenant";
 
 export const runtime = "nodejs";
 
@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
   const sessionToken = crypto.randomBytes(32).toString("hex");
   const expires = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
 
+  const { prisma } = await getTenantContext();
   await prisma.session.create({
     data: {
       sessionToken,

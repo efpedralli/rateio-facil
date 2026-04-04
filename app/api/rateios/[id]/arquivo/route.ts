@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
 import { AuthGuardError, requireRole } from "@/lib/auth";
-import { UserRole, prisma } from "@/lib/prisma";
+import { UserRole } from "@prisma/client";
+import { getTenantContext } from "@/lib/multitenant";
 
 export const runtime = "nodejs";
 
@@ -22,6 +23,7 @@ export async function GET(
     await requireRole([UserRole.ADMIN, UserRole.OPERATOR]);
     const { id } = await ctx.params;
 
+    const { prisma } = await getTenantContext();
     const rateio = await prisma.rateios.findUnique({
       where: { id },
       include: { rateioArquivos: true },

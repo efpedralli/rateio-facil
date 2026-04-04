@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AuditEvent, UserRole, prisma } from "@/lib/prisma";
+import { AuditEvent, UserRole } from "@prisma/client";
+import { getTenantContext } from "@/lib/multitenant";
 import { hashPassword, validatePasswordStrength } from "@/lib/security/password";
 import { getClientIp, getUserAgent } from "@/lib/request";
 import { writeAudit } from "@/lib/audit";
@@ -37,6 +38,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
+  const { prisma } = await getTenantContext();
   const userCount = await prisma.user.count();
   if (userCount > 0) {
     redirectUrl.searchParams.set("error", "Setup is already completed.");

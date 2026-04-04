@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AuthGuardError, requireRole } from "@/lib/auth";
-import { AuditEvent, UserRole, prisma } from "@/lib/prisma";
+import { AuditEvent, UserRole } from "@prisma/client";
+import { getTenantContext } from "@/lib/multitenant";
 import { getClientIp, getUserAgent } from "@/lib/request";
 import { writeAudit } from "@/lib/audit";
 
@@ -17,6 +18,7 @@ export async function GET() {
   try {
     await requireRole([UserRole.ADMIN]);
 
+    const { prisma } = await getTenantContext();
     const users = await prisma.user.findMany({
       select: {
         id: true,
@@ -39,6 +41,7 @@ export async function GET() {
 export async function PATCH(req: NextRequest) {
   try {
     const session = await requireRole([UserRole.ADMIN]);
+    const { prisma } = await getTenantContext();
     const body = (await req.json()) as { userId?: string; role?: UserRole };
 
     const userId = String(body.userId ?? "");

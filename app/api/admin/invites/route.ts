@@ -1,7 +1,8 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { AuthGuardError, requireRole } from "@/lib/auth";
-import { AuditEvent, UserRole, prisma } from "@/lib/prisma";
+import { AuditEvent, UserRole } from "@prisma/client";
+import { getTenantContext } from "@/lib/multitenant";
 import { getClientIp, getUserAgent } from "@/lib/request";
 import { writeAudit } from "@/lib/audit";
 
@@ -20,6 +21,7 @@ function authErrorToResponse(error: unknown) {
 export async function POST(req: NextRequest) {
   try {
     const session = await requireRole([UserRole.ADMIN]);
+    const { prisma } = await getTenantContext();
     const rawToken = crypto.randomBytes(INVITE_TOKEN_BYTES).toString("hex");
     const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
 

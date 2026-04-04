@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getTenantContext } from "@/lib/multitenant";
 import path from "path";
 import fs from "fs/promises";
 import { spawn } from "child_process";
@@ -247,6 +247,7 @@ function matchItem(
 export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
 
+  const { prisma } = await getTenantContext();
   const rateio = await prisma.rateios.findUnique({
     where: { id },
     include: {

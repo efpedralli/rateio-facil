@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { AuditEvent, prisma } from "@/lib/prisma";
+import { AuditEvent } from "@prisma/client";
+import { getTenantContext } from "@/lib/multitenant";
 import { writeAudit } from "@/lib/audit";
 import { getClientIp, getUserAgent } from "@/lib/request";
 
@@ -26,6 +27,7 @@ export async function POST(req: NextRequest) {
   let auditedUserId: string | null = null;
 
   if (email) {
+    const { prisma } = await getTenantContext();
     const user = await prisma.user.findUnique({ where: { email } });
     if (user && user.isActive) {
       const rawToken = crypto.randomBytes(RESET_TOKEN_BYTES).toString("hex");
