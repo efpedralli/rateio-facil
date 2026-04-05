@@ -15,14 +15,20 @@ def _guess_movimento_conta(desc: str) -> str:
     d = (desc or "").lower()
     if "total dispon" in d:
         return "TOTAL_DISPONIVEL"
+    if "acumulado" in d and (
+        "anterior" in d or "competência" in d or "competencia" in d
+    ):
+        return "SALDO_ANTERIOR"
     if "saldo anterior" in d or "sld ant" in d:
         return "SALDO_ANTERIOR"
+    if "saldo atual" in d or "sld atual" in d:
+        return "SALDO_ATUAL"
+    if "resgate" in d and "poupan" in d:
+        return "SAIDA"
     if "entrada" in d and "total" not in d[:28]:
         return "ENTRADA"
     if "saída" in d or "saida" in d:
         return "SAIDA"
-    if "saldo atual" in d or "sld atual" in d:
-        return "SALDO_ATUAL"
     return "ENTRADA"
 
 

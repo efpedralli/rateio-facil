@@ -48,11 +48,96 @@ function normalizeLabel(s: string): string {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+function roundMoney(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
 function signedItemValue(
   e: BalanceteParseResult["entries"][number]
 ): number {
   if (e.tipoLinha !== "ITEM") return 0;
   return e.valor * e.sinal;
+}
+
+/** Linhas de grupo / resumo que não são lançamento (Belle pág. 2, totais macro, etc.). */
+function isSyntheticResumoLine(desc: string): boolean {
+  const l = normalizeLabel(desc);
+  if (!l) return true;
+  if (l === "receitas" || l === "despesas") return true;
+  if (l.startsWith("receitas r$")) return true;
+  if (l.startsWith("despesas r$")) return true;
+  if (l.includes("total (receitas - despesas)")) return true;
+  if (l.includes("total dispon")) return true;
+  if (l.includes("saldo atual") && l.includes("fundo")) return true;
+  if (l.includes("saldo atual") && l.includes("conta corrente")) return true;
+  if (l.includes("saldo atual") && l.includes("fluxo")) return true;
+  if (/^despesas\s+ordin/i.test(l)) return true;
+  if (/^despesas\s+.*\bagua\b/.test(l) && l.includes("esgoto"))
+    return true;
+  if (/^despesas\s+fundo\s+de\s+manuten/.test(l)) return true;
+  if (l.includes("receitas do mes") && l.includes("total geral")) return true;
+  if (l.includes("despesas do mes") && l.includes("total geral")) return true;
+  if (l.includes("total grupo")) return true;
+  if (l.includes("total geral")) return true;
+  if (l.includes("subtotal")) return true;
+  if (l.startsWith("total")) return true;
+  return false;
+}
+
+const _RE_DATE_LEAD_ENTRY = /^\d{1,2}\/\d{1,2}\/\d{4}\s+/;
+
+function shouldSkipExportGroup(grupoOrigem: string): boolean {
+  const g = normalizeLabel(grupoOrigem || "");
+  if (!g) return false;
+  if (g === "resumo_mes" || g === "resumo mes") return true;
+  if (g === "receitas x despesas") return true;
+  if (g.startsWith("resgates - fundo de obra")) return true;
+  if (g === "entradas valor") return true;
+  if (/^(saydas|saidas|sai\s*das)\s+valor$/.test(g)) return true;
+  return false;
+}
+
+function extractMonthTotalsFromLancamentos(
+  parse: BalanceteParseResult
+): {
+  total_receitas?: number;
+  total_despesas?: number;
+  saldo_mes?: number;
+} {
+  const out: {
+    total_receitas?: number;
+    total_despesas?: number;
+    saldo_mes?: number;
+  } = {};
+  const lan = entriesLancamentos(parse.entries);
+  for (const e of lan) {
+    const l = normalizeLabel(e.descricao || "");
+    const v = Math.abs(e.valor);
+    if (
+      l.includes("receitas") &&
+      l.includes("total") &&
+      l.includes("geral") &&
+      !l.includes("despes")
+    ) {
+      out.total_receitas = v;
+    }
+    if (
+      l.includes("despesas") &&
+      l.includes("total") &&
+      l.includes("geral")
+    ) {
+      out.total_despesas = v;
+    }
+    if (
+      l.includes("total") &&
+      l.includes("receitas") &&
+      l.includes("despesas") &&
+      (l.includes("-") || l.includes("menos"))
+    ) {
+      out.saldo_mes = v;
+    }
+  }
+  return out;
 }
 
 function summaryFromResumoAndEntries(
@@ -84,12 +169,33 @@ function summaryFromResumoAndEntries(
     }
   }
 
+  const fromLanc = extractMonthTotalsFromLancamentos(parse);
+  if (out.total_receitas === undefined && fromLanc.total_receitas !== undefined) {
+    out.total_receitas = fromLanc.total_receitas;
+  }
+  if (out.total_despesas === undefined && fromLanc.total_despesas !== undefined) {
+    out.total_despesas = fromLanc.total_despesas;
+  }
+  if (out.saldo_mes === undefined && fromLanc.saldo_mes !== undefined) {
+    out.saldo_mes = fromLanc.saldo_mes;
+  }
+
   const lan = entriesLancamentos(parse.entries);
   const sumRec = lan
-    .filter((e) => e.secaoMacro === "RECEITAS" && e.tipoLinha === "ITEM")
+    .filter(
+      (e) =>
+        e.secaoMacro === "RECEITAS" &&
+        e.tipoLinha === "ITEM" &&
+        !isSyntheticResumoLine(e.descricao || "")
+    )
     .reduce((a, e) => a + signedItemValue(e), 0);
   const sumDesp = lan
-    .filter((e) => e.secaoMacro === "DESPESAS" && e.tipoLinha === "ITEM")
+    .filter(
+      (e) =>
+        e.secaoMacro === "DESPESAS" &&
+        e.tipoLinha === "ITEM" &&
+        !isSyntheticResumoLine(e.descricao || "")
+    )
     .reduce((a, e) => a + Math.abs(signedItemValue(e)), 0);
 
   if (out.total_receitas === undefined && sumRec > 0) {
@@ -103,7 +209,7 @@ function summaryFromResumoAndEntries(
     out.total_receitas !== undefined &&
     out.total_despesas !== undefined
   ) {
-    out.saldo_mes = out.total_receitas - out.total_despesas;
+    out.saldo_mes = roundMoney(out.total_receitas - out.total_despesas);
   }
 
   return out;
@@ -139,76 +245,153 @@ function tryAccountsFromCanonical(
   return acc;
 }
 
-function pivotResumoContas(
-  rows: BalanceteResumoConta[]
-): CanonicalExportAccount[] {
-  type Agg = {
-    nome: string;
-    saldo_anterior: number;
-    creditos: number;
-    debitos: number;
-    transferencias_mais: number;
-    transferencias_menos: number;
-    saldo_final: number;
+type FundContaKey =
+  | "FUNDO_DE_OBRA"
+  | "FUNDO_RESERVA_POUPANCA"
+  | "CONTA_CORRENTE_FLUXO";
+
+const FUND_CONTA_NOME: Record<FundContaKey, string> = {
+  FUNDO_DE_OBRA: "FUNDO DE OBRA",
+  FUNDO_RESERVA_POUPANCA: "FUNDO DE RESERVA DE POUPANÇA PERMANENTE",
+  CONTA_CORRENTE_FLUXO: "CONTA CORRENTE - FLUXO DE CAIXA DE MANUTENÇÃO",
+};
+
+function emptyExportAccount(nome: string): CanonicalExportAccount {
+  return {
+    nome,
+    saldo_anterior: 0,
+    creditos: 0,
+    debitos: 0,
+    transferencias_mais: 0,
+    transferencias_menos: 0,
+    saldo_final: 0,
   };
-  const m = new Map<string, Agg>();
+}
+
+function fundKeyFromResumoContaDesc(desc: string): FundContaKey | null {
+  const l = normalizeLabel(desc);
+  if (l.includes("total dispon")) return null;
+  if (
+    l.includes("fundo de reserva") ||
+    (l.includes("reserva") && l.includes("poup"))
+  ) {
+    return "FUNDO_RESERVA_POUPANCA";
+  }
+  if (l.includes("fundo de obra")) return "FUNDO_DE_OBRA";
+  if (
+    l.includes("conta corrente") ||
+    l.includes("fluxo de caixa de manuten") ||
+    l.includes("fluxo de caixa de manutencao") ||
+    l.includes("receita de cotas") ||
+    (l.includes("receita mensal") && l.includes("fluxo")) ||
+    l.includes("aluguel salao") ||
+    l.includes("aluguel")
+  ) {
+    return "CONTA_CORRENTE_FLUXO";
+  }
+  return null;
+}
+
+function fundKeyFromSaldoAtualDesc(desc: string): FundContaKey | null {
+  const l = normalizeLabel(desc);
+  if (l.includes("fundo de obra") && !l.includes("reserva")) {
+    return "FUNDO_DE_OBRA";
+  }
+  if (l.includes("reserva") && l.includes("poup")) {
+    return "FUNDO_RESERVA_POUPANCA";
+  }
+  if (l.includes("conta corrente") || l.includes("fluxo de caixa")) {
+    return "CONTA_CORRENTE_FLUXO";
+  }
+  return null;
+}
+
+function pivotResumoContasByFund(
+  rows: BalanceteResumoConta[],
+  summary: Record<string, number>,
+  parse: BalanceteParseResult
+): CanonicalExportAccount[] {
+  const aggs = new Map<FundContaKey, CanonicalExportAccount>();
+  for (const k of Object.keys(FUND_CONTA_NOME) as FundContaKey[]) {
+    aggs.set(k, emptyExportAccount(FUND_CONTA_NOME[k]));
+  }
 
   for (const r of rows) {
-    const nome = (r.conta || "").trim() || (r.descricao || "").trim() || "Conta";
-    let a = m.get(nome);
-    if (!a) {
-      a = {
-        nome,
-        saldo_anterior: 0,
-        creditos: 0,
-        debitos: 0,
-        transferencias_mais: 0,
-        transferencias_menos: 0,
-        saldo_final: 0,
-      };
-      m.set(nome, a);
-    }
+    const desc = r.descricao || "";
+    const fk = fundKeyFromResumoContaDesc(desc);
+    if (!fk) continue;
+    const a = aggs.get(fk)!;
+    const l = normalizeLabel(desc);
     const v = Math.abs(r.valor);
-    switch (r.movimento) {
-      case "SALDO_ANTERIOR":
-        a.saldo_anterior = v;
-        break;
-      case "ENTRADA":
-        a.creditos += v;
-        break;
-      case "SAIDA":
-        a.debitos += v;
-        break;
-      case "SALDO_ATUAL":
-        a.saldo_final = v;
-        break;
-      case "TOTAL_DISPONIVEL":
-        a.saldo_final = v;
-        break;
-      default:
-        break;
+    const mov = r.movimento;
+
+    if (
+      mov === "SALDO_ANTERIOR" ||
+      (l.includes("acumulado") &&
+        (l.includes("anterior") ||
+          l.includes("competencia") ||
+          l.includes("competência")))
+    ) {
+      a.saldo_anterior = v;
+    } else if (mov === "SALDO_ATUAL" || l.includes("saldo atual")) {
+      a.saldo_final = v;
+    } else if (
+      mov === "SAIDA" ||
+      (fk === "FUNDO_RESERVA_POUPANCA" && l.includes("resgate"))
+    ) {
+      a.debitos += v;
+    } else if (mov === "ENTRADA" || mov === "TOTAL_DISPONIVEL") {
+      a.creditos += v;
     }
   }
 
-  return Array.from(m.values());
+  for (const e of parse.entries) {
+    if (e.fase !== "RESUMO_MES") continue;
+    const l = normalizeLabel(e.descricao || "");
+    if (!l.includes("saldo atual")) continue;
+    const fk = fundKeyFromSaldoAtualDesc(e.descricao || "");
+    if (!fk) continue;
+    aggs.get(fk)!.saldo_final = Math.abs(e.valor);
+  }
+
+  const tr = summary.total_receitas;
+  const td = summary.total_despesas;
+  if (tr !== undefined && td !== undefined && rows.length > 0) {
+    const flux = aggs.get("CONTA_CORRENTE_FLUXO")!;
+    const obra = aggs.get("FUNDO_DE_OBRA")!;
+    const res = aggs.get("FUNDO_RESERVA_POUPANCA")!;
+    flux.creditos = roundMoney(tr - obra.creditos - res.creditos);
+    flux.debitos = roundMoney(td);
+  }
+
+  const order: FundContaKey[] = [
+    "FUNDO_DE_OBRA",
+    "FUNDO_RESERVA_POUPANCA",
+    "CONTA_CORRENTE_FLUXO",
+  ];
+  return order.map((k) => aggs.get(k)!);
 }
 
 function buildExportAccounts(
-  parse: BalanceteParseResult
+  parse: BalanceteParseResult,
+  summary: Record<string, number>
 ): CanonicalExportAccount[] {
   if (parse.resumoContas.length > 0) {
-    return pivotResumoContas(parse.resumoContas);
+    return pivotResumoContasByFund(parse.resumoContas, summary, parse);
   }
-  const fromCanon = tryAccountsFromCanonical(parse.canonical);
-  return fromCanon;
+  return tryAccountsFromCanonical(parse.canonical);
 }
 
 function buildExportEntries(parse: BalanceteParseResult): CanonicalExportEntry[] {
   const out: CanonicalExportEntry[] = [];
   let ordem = 1;
-  for (const e of parse.entries) {
-    if (e.tipoLinha === "TITULO") continue;
+  for (const e of entriesLancamentos(parse.entries)) {
+    if (e.tipoLinha !== "ITEM") continue;
     if (e.secaoMacro !== "RECEITAS" && e.secaoMacro !== "DESPESAS") continue;
+    const descTrim = (e.descricao || "").trim();
+    if (!_RE_DATE_LEAD_ENTRY.test(descTrim)) continue;
+    if (shouldSkipExportGroup(e.grupoOrigem || "")) continue;
+    if (isSyntheticResumoLine(e.descricao || "")) continue;
     out.push({
       section: e.secaoMacro,
       group: e.grupoOrigem || "GERAL",
@@ -224,6 +407,10 @@ export function buildCanonicalExportPayload(
   parse: BalanceteParseResult
 ): CanonicalBalanceteExportPayload {
   const md = parse.metadata;
+  const summary = summaryFromResumoAndEntries(
+    parse.canonical.resumo,
+    parse
+  );
   return {
     metadata: {
       condominio: md.condominiumName ?? "",
@@ -234,7 +421,7 @@ export function buildCanonicalExportPayload(
       source_file: md.fileName ?? "",
     },
     entries: buildExportEntries(parse),
-    summary: summaryFromResumoAndEntries(parse.canonical.resumo, parse),
-    accounts: buildExportAccounts(parse),
+    summary,
+    accounts: buildExportAccounts(parse, summary),
   };
 }

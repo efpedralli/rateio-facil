@@ -289,6 +289,14 @@ def _is_aggregate_line(desc: str) -> bool:
         return True
     if re.match(r"^despesas\s+r\$", low):
         return True
+    if re.match(r"^despesas\s+ordin", low):
+        return True
+    if "despesas" in low and "agua" in low and "esgoto" in low and "r$" in low:
+        return True
+    if re.match(r"^despesas\s+fundo\s+de\s+manuten", low):
+        return True
+    if "total dispon" in low:
+        return True
     if "total (receitas - despesas)" in low:
         return True
     if re.match(r"^total\s*\(?\s*receitas\s*-\s*despesas", low):
@@ -430,6 +438,14 @@ def _summary_totals(data: Mapping[str, Any], sum_rec: float, sum_desp: float) ->
     tr = _num(sm.get("total_receitas"))
     td = _num(sm.get("total_despesas"))
     sm_saldo = _num(sm.get("saldo_mes"))
+    if tr is not None and td is not None:
+        rec = _money_round(float(tr))
+        desp = _money_round(float(td))
+        if sm_saldo is not None:
+            diff = _money_round(float(sm_saldo))
+        else:
+            diff = _money_round(rec - desp)
+        return rec, desp, diff
     rec = _money_round(float(tr) if tr is not None else sum_rec)
     desp = _money_round(float(td) if td is not None else sum_desp)
     diff = _money_round(rec - desp)
@@ -602,6 +618,177 @@ def _load_json(path: str) -> Dict[str, Any]:
     raise ValueError(f"JSON inválido ou encoding não suportado: {path}")
 
 
+_FUND_CONTA_NOME = {
+    "FUNDO_DE_OBRA": "FUNDO DE OBRA",
+    "FUNDO_RESERVA_POUPANCA": "FUNDO DE RESERVA DE POUPANÇA PERMANENTE",
+    "CONTA_CORRENTE_FLUXO": "CONTA CORRENTE - FLUXO DE CAIXA DE MANUTENÇÃO",
+}
+
+_RE_DATE_LEAD_LANCAMENTO = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}\s+")
+
+
+def _is_synthetic_resumo_line(desc: str) -> bool:
+    low = _norm_key(desc or "")
+    if not low:
+        return True
+    if low in ("receitas", "despesas"):
+        return True
+    if low.startswith("receitas r$"):
+        return True
+    if low.startswith("despesas r$"):
+        return True
+    if "total (receitas - despesas)" in low:
+        return True
+    if "total dispon" in low:
+        return True
+    if "saldo atual" in low and "fundo" in low:
+        return True
+    if "saldo atual" in low and "conta corrente" in low:
+        return True
+    if "saldo atual" in low and "fluxo" in low:
+        return True
+    if re.match(r"^despesas\s+ordin", low):
+        return True
+    if "despesas" in low and "agua" in low and "esgoto" in low:
+        return True
+    if re.match(r"^despesas\s+fundo\s+de\s+manuten", low):
+        return True
+    if "receitas do mes" in low and "total geral" in low:
+        return True
+    if "despesas do mes" in low and "total geral" in low:
+        return True
+    if "total grupo" in low or "total geral" in low or "subtotal" in low:
+        return True
+    if low.startswith("total"):
+        return True
+    return False
+
+
+def _should_skip_export_group_belle(grp: str) -> bool:
+    g = _norm_key(grp or "")
+    if not g:
+        return False
+    if g in ("resumo_mes", "resumo mes", "receitas x despesas"):
+        return True
+    if g.startswith("resgates - fundo de obra"):
+        return True
+    if g == "entradas valor":
+        return True
+    if re.match(r"^(saydas|saidas|sa[ií]das)\s+valor$", g):
+        return True
+    return False
+
+
+def _fund_from_resumo_conta_desc(desc: str) -> Optional[str]:
+    low = _norm_key(desc or "")
+    if "total dispon" in low:
+        return None
+    if "fundo de reserva" in low or ("reserva" in low and "poup" in low):
+        return "FUNDO_RESERVA_POUPANCA"
+    if "fundo de obra" in low:
+        return "FUNDO_DE_OBRA"
+    if (
+        "conta corrente" in low
+        or "fluxo de caixa de manuten" in low
+        or "fluxo de caixa de manutencao" in low
+        or "receita de cotas" in low
+        or ("receita mensal" in low and "fluxo" in low)
+        or "aluguel salao" in low
+        or "aluguel" in low
+    ):
+        return "CONTA_CORRENTE_FLUXO"
+    return None
+
+
+def _fund_from_saldo_atual_desc(desc: str) -> Optional[str]:
+    low = _norm_key(desc or "")
+    if "fundo de obra" in low and "reserva" not in low:
+        return "FUNDO_DE_OBRA"
+    if "reserva" in low and "poup" in low:
+        return "FUNDO_RESERVA_POUPANCA"
+    if "conta corrente" in low or "fluxo de caixa" in low:
+        return "CONTA_CORRENTE_FLUXO"
+    return None
+
+
+def _pivot_accounts_from_resumo_belle(
+    raw: Dict[str, Any], summary: Dict[str, float]
+) -> List[Dict[str, Any]]:
+    rows = raw.get("resumoContas") or []
+    if not isinstance(rows, list) or not rows:
+        return []
+    aggs: Dict[str, Dict[str, float]] = {
+        k: {
+            "nome": _FUND_CONTA_NOME[k],
+            "saldo_anterior": 0.0,
+            "creditos": 0.0,
+            "debitos": 0.0,
+            "transferencias_mais": 0.0,
+            "transferencias_menos": 0.0,
+            "saldo_final": 0.0,
+        }
+        for k in _FUND_CONTA_NOME
+    }
+    for r in rows:
+        if not isinstance(r, Mapping):
+            continue
+        desc = _str(r.get("descricao"))
+        fk = _fund_from_resumo_conta_desc(desc)
+        if not fk:
+            continue
+        a = aggs[fk]
+        low = _norm_key(desc)
+        v = float(abs(_num(r.get("valor")) or 0.0))
+        mov = _str(r.get("movimento")).upper()
+        if mov == "SALDO_ANTERIOR" or (
+            "acumulado" in low
+            and (
+                "anterior" in low or "competencia" in low or "competência" in low
+            )
+        ):
+            a["saldo_anterior"] = v
+        elif mov == "SALDO_ATUAL" or "saldo atual" in low:
+            a["saldo_final"] = v
+        elif mov == "SAIDA" or (
+            fk == "FUNDO_RESERVA_POUPANCA" and "resgate" in low
+        ):
+            a["debitos"] += v
+        elif mov in ("ENTRADA", "TOTAL_DISPONIVEL"):
+            a["creditos"] += v
+
+    for e in raw.get("entries") or []:
+        if not isinstance(e, Mapping):
+            continue
+        if _str(e.get("fase")) != "RESUMO_MES":
+            continue
+        desc = _str(e.get("descricao"))
+        low = _norm_key(desc)
+        if "saldo atual" not in low:
+            continue
+        fk = _fund_from_saldo_atual_desc(desc)
+        if not fk:
+            continue
+        val = _num(e.get("valor"))
+        if val is not None:
+            aggs[fk]["saldo_final"] = float(abs(val))
+
+    tr = _num(summary.get("total_receitas"))
+    td = _num(summary.get("total_despesas"))
+    if tr is not None and td is not None:
+        obra = aggs["FUNDO_DE_OBRA"]
+        res = aggs["FUNDO_RESERVA_POUPANCA"]
+        flux = aggs["CONTA_CORRENTE_FLUXO"]
+        flux["creditos"] = _money_round(float(tr) - obra["creditos"] - res["creditos"])
+        flux["debitos"] = _money_round(float(td))
+
+    order = (
+        "FUNDO_DE_OBRA",
+        "FUNDO_RESERVA_POUPANCA",
+        "CONTA_CORRENTE_FLUXO",
+    )
+    return [aggs[k] for k in order]
+
+
 def _canonical_export_from_saida_belle(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Monta payload tipo canonical_export a partir de JSON schemaVersion 2 (teste manual)."""
     if raw.get("schemaVersion") != 2:
@@ -611,7 +798,23 @@ def _canonical_export_from_saida_belle(raw: Dict[str, Any]) -> Dict[str, Any]:
     for e in raw.get("entries") or []:
         if not isinstance(e, Mapping):
             continue
+        fase = e.get("fase")
+        if fase not in (None, "LANCAMENTOS"):
+            continue
+        tl = _str(e.get("tipoLinha") or e.get("tipo_linha")).upper()
+        if tl != "ITEM":
+            continue
         sec = e.get("secaoMacro") or e.get("section")
+        if sec not in ("RECEITAS", "DESPESAS"):
+            continue
+        desc = _str(e.get("descricao") or e.get("description"))
+        if not _RE_DATE_LEAD_LANCAMENTO.match(desc.strip()):
+            continue
+        grp = e.get("grupoOrigem") or e.get("group") or ""
+        if _should_skip_export_group_belle(_str(grp)):
+            continue
+        if _is_synthetic_resumo_line(desc):
+            continue
         entries_out.append(
             {
                 "section": sec,
@@ -636,6 +839,29 @@ def _canonical_export_from_saida_belle(raw: Dict[str, Any]) -> Dict[str, Any]:
         elif "despes" in lab and "total" in lab and "geral" in lab:
             summary["total_despesas"] = float(val)
 
+    for e in raw.get("entries") or []:
+        if not isinstance(e, Mapping):
+            continue
+        if e.get("fase") not in (None, "LANCAMENTOS"):
+            continue
+        low = _norm_key(_str(e.get("descricao")))
+        val = _num(e.get("valor"))
+        if val is None:
+            continue
+        if (
+            "receitas" in low
+            and "total" in low
+            and "geral" in low
+            and "despes" not in low
+        ):
+            summary["total_receitas"] = float(val)
+        if "despesas" in low and "total" in low and "geral" in low:
+            summary["total_despesas"] = float(val)
+        if "total" in low and "receitas" in low and "despesas" in low and "-" in low:
+            summary["saldo_mes"] = float(abs(val))
+
+    accounts = _pivot_accounts_from_resumo_belle(raw, summary)
+
     meta_out = {
         "condominio": md_in.get("condominiumName") or md_in.get("condominio"),
         "competencia": md_in.get("competenceLabel"),
@@ -643,7 +869,12 @@ def _canonical_export_from_saida_belle(raw: Dict[str, Any]) -> Dict[str, Any]:
         "source_file": md_in.get("fileName") or md_in.get("source_file"),
         "parser_type": md_in.get("parserLayoutId"),
     }
-    return {"metadata": meta_out, "entries": entries_out, "summary": summary, "accounts": []}
+    return {
+        "metadata": meta_out,
+        "entries": entries_out,
+        "summary": summary,
+        "accounts": accounts,
+    }
 
 
 if __name__ == "__main__":
