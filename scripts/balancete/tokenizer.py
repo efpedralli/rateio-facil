@@ -21,6 +21,39 @@ _RE_REL_MONEY = re.compile(
 )
 
 
+def _normalize_ocr_broken_money(raw: str) -> str:
+    """
+    Recompõe dígitos partidos por espaço logo após R$ (OCR).
+    Só altera trechos `R$ …`; datas e códigos fora desse contexto permanecem iguais.
+    Ex.: R$ 4 4,00 -> R$ 44,00 ; R$ 6 4.681,71 -> R$ 64.681,71
+    """
+    s = raw
+    while True:
+        prev = s
+        # Mais específico primeiro (milhares com pontos, depois xxx,dd, depois x,dd)
+        s = re.sub(
+            r"(R\$\s*)(\d)\s+(\d{1,3}\.\d{3},\d{2}\b)",
+            r"\1\2\3",
+            s,
+            flags=re.IGNORECASE,
+        )
+        s = re.sub(
+            r"(R\$\s*)(\d)\s+(\d{3},\d{2}\b)",
+            r"\1\2\3",
+            s,
+            flags=re.IGNORECASE,
+        )
+        s = re.sub(
+            r"(R\$\s*)(\d)\s+(\d,\d{2}\b)",
+            r"\1\2\3",
+            s,
+            flags=re.IGNORECASE,
+        )
+        if s == prev:
+            break
+    return s
+
+
 def pre_normalize_line_for_ocr(line: str) -> str:
     """
     Recompõe valores quebrados por OCR (espaço antes do separador de milhar).
@@ -254,6 +287,7 @@ def tokenize(lines: List[str]) -> List[Dict[str, Any]]:
         if not raw or not str(raw).strip():
             continue
         raw = str(raw).strip()
+        raw = _normalize_ocr_broken_money(raw)
         clean = " ".join(raw.lower().split())
         spans = reliable_comma_money_spans(raw)
         valor, strat = _select_initial_valor_from_spans(raw, spans)
