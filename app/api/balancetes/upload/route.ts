@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
       const firstErr = result.issues.find((i) => i.type === "ERROR");
       const errMsg =
         firstErr?.message ??
-        "Não foi possível gerar o arquivo de importação. Verifique o PDF, o layout ou o modelo em models/.";
+        "Não foi possível gerar o arquivo de importação. Verifique o PDF ou o layout.";
 
       await prisma.balanceteJob.update({
         where: { id: jobId },

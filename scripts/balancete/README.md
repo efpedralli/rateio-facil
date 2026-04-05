@@ -48,5 +48,16 @@ python parse_balancete_pdf.py caminho/para/balancete.pdf "Nome exibido.pdf"
 | `llm_fallback.py` | `classify_with_llm` — JSON por linha |
 | `parse_balancete.py` | `parse_pdf` — orquestrador |
 | `semantic_bridge.py` | compatibilidade com `leitor_adapter.rows_to_parse_json` |
+| `export_xlsx.py` | `export_balancete_to_xlsx` — gera `.xlsx` padrão (abas Lancamentos, Resumo, Contas), **sem template em `models/`** |
+
+### Exportação XLSX (sem template)
+
+O app Node grava `canonical_export.json` e chama:
+
+```bash
+python export_xlsx.py caminho/canonical_export.json saida.xlsx
+```
+
+Sem argumentos, gera `teste_balancete.xlsx` com dados de exemplo.
 
 O pacote legado `leitor_balancete/` permanece disponível para uso offline (CSV/XLSX) via `python -m leitor_balancete`.
