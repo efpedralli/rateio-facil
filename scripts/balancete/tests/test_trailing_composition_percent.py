@@ -14,13 +14,14 @@ if str(BALANCETE_DIR) not in sys.path:
 from block_detector import detect_blocks  # noqa: E402
 from line_classifier import classify_lines  # noqa: E402
 from tokenizer import (  # noqa: E402
+    pre_normalize_line_for_ocr,
     refine_trailing_composition_amounts,
     tokenize,
 )
 
 
 def _pipeline_one(raw: str, block: str = "RECEITAS") -> dict:
-    tokens = tokenize([raw])
+    tokens = tokenize([pre_normalize_line_for_ocr(raw)])
     tokens[0]["block"] = block
     tokens = classify_lines(tokens)
     refine_trailing_composition_amounts(tokens)
@@ -64,7 +65,7 @@ def test_despesa_irrf_sem_composition_percent_linha_completa():
     assert "composition_percent" not in t
     assert t.get("value_selection_reason") is None
     assert t["valor"] == pytest.approx(14.11)
-    assert t.get("value_selection_strategy") == "last_money_lancamento_line"
+    assert t.get("value_selection_strategy") == "despesa_last_reliable_amount"
     assert t.get("percentage_detected") is False
 
 
@@ -103,23 +104,25 @@ def test_receita_mal_classificada_despesa_dois_valores_nao_pega_percentual():
 
 
 def test_simula_pdf_coluna_percentual_primeiro_receitas_corrige():
-    """Se o texto vier com o % antes do valor, o primeiro match antigo erra; a heurística não deve forçar padrão inválido."""
+    """% antes do valor com texto no meio: não é par [valor][%] colado; montante é o maior no fim."""
     raw = "55,70 Taxa de Condomínio 20.818,90"
-    tokens = tokenize([raw])
+    tokens = tokenize([pre_normalize_line_for_ocr(raw)])
     tokens[0]["block"] = "RECEITAS"
     tokens = classify_lines(tokens)
     refine_trailing_composition_amounts(tokens)
     t = tokens[0]
-    # último número não está em [0,100] como último span com vírgula — não aplica
-    assert t["valor"] == pytest.approx(55.70)
+    assert t["valor"] == pytest.approx(20818.90)
     assert "composition_percent" not in t
 
 
 def test_receitas_com_cabecalho_sticky_block():
     lines = [
-        "Receitas do período",
-        "Taxa de Condomínio 20.818,90 55,70",
-        "37.379,10 100,00",
+        pre_normalize_line_for_ocr(x)
+        for x in (
+            "Receitas do período",
+            "Taxa de Condomínio 20.818,90 55,70",
+            "37.379,10 100,00",
+        )
     ]
     tokens = tokenize(lines)
     tokens = detect_blocks(tokens)

@@ -3,23 +3,56 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-# Valores BR: 1.234,56 | 1234,56 | R$ 1.234,56
-_RE_MONEY = re.compile(
-    r"(?:R\$\s*)?(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+,\d{1,2})",
-    re.IGNORECASE,
-)
-
-# Datas comuns em extratos / balancetes (bloqueiam heurística de %)
+# Datas com ano ou dia/mês/ano (exclui parcela curta 04/06 em "P. 04/06")
 _RE_LINE_HAS_DATE = re.compile(
-    r"\b\d{1,2}/\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b",
+    r"\b\d{1,2}/\d{1,2}/\d{4}\b|\b\d{1,2}/\d{4}\b|\b\d{4}-\d{2}-\d{2}\b",
 )
 
-# Estrutura típica de lançamento (não é coluna de % de receita)
 _RE_LANCAMENTO_HINT = re.compile(
     r"(débito|debito|boleto|\bpix\b|transferência|transferencia|"
     r"guia\b|doc\.|documento|nf-?e|\bnf\b|aut\.|\baut\b)",
     re.IGNORECASE,
 )
+
+# Montante BR com vírgula decimal obrigatória (rejeita inteiros tipo 8301)
+_RE_REL_MONEY = re.compile(
+    r"(?:R\$\s*)?(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2})\b",
+    re.IGNORECASE,
+)
+
+
+def pre_normalize_line_for_ocr(line: str) -> str:
+    """
+    Recompõe valores quebrados por OCR (espaço antes do separador de milhar).
+    Preserva datas com barras.
+    """
+    s = line
+    s = re.sub(
+        r"(R\$\s*)(\d{1,3})\s+\.(\d{3},\d{2}\b)",
+        r"\1\2.\3",
+        s,
+        flags=re.IGNORECASE,
+    )
+    s = re.sub(
+        r"(R\$\s*)(\d{1,3})\s+(\d{3},\d{2}\b)",
+        r"\1\2.\3",
+        s,
+        flags=re.IGNORECASE,
+    )
+    # Não juntar se vier após vírgula (centavos do valor anterior), barra (data) ou dígito:
+    # evita "...,10 100,00" -> "10.100,00" ou "2026 820,02" -> "6.820,02".
+    _no_merge_before = r"(?<![,/\d])"
+    s = re.sub(
+        _no_merge_before + r"(\d{1,3})\s+\.(\d{3},\d{2}\b)",
+        r"\1.\2",
+        s,
+    )
+    s = re.sub(
+        _no_merge_before + r"(\d{1,3})\s+(\d{3},\d{2}\b)",
+        r"\1.\2",
+        s,
+    )
+    return s
 
 
 def _parse_br_float(s: str) -> Optional[float]:
@@ -37,32 +70,33 @@ def _parse_br_float(s: str) -> Optional[float]:
         return None
 
 
-def _first_money_value(line: str) -> Optional[float]:
-    m = _RE_MONEY.search(line)
-    if not m:
-        return None
-    return _parse_br_float(m.group(1))
-
-
-def _count_money_tokens(line: str) -> int:
-    return len(_RE_MONEY.findall(line))
-
-
-def _money_spans_with_comma_decimal(line: str) -> List[Tuple[float, int, int, str]]:
+def reliable_comma_money_spans(line: str) -> List[Tuple[float, int, int, str]]:
     """
-    Candidatos monetários que incluem vírgula decimal (evita '02' de datas em 02/2026).
-    Usado só na heurística de [valor][%] no fim da linha.
+    Candidatos monetários com vírgula decimal (1.234,56 ou 123,45 ou R$ ...).
+    Ignora trechos imediatamente precedidos por '/' (evita ruído colado a datas).
     """
     out: List[Tuple[float, int, int, str]] = []
-    for m in _RE_MONEY.finditer(line):
-        g1 = m.group(1)
-        if "," not in g1:
+    for m in _RE_REL_MONEY.finditer(line):
+        start, end = m.start(), m.end()
+        if start > 0 and line[start - 1] == "/":
             continue
+        g1 = m.group(1)
         val = _parse_br_float(g1)
         if val is None:
             continue
-        out.append((val, m.start(), m.end(), g1))
+        out.append((val, start, end, g1))
     return out
+
+
+def _select_initial_valor_from_spans(
+    raw: str, spans: List[Tuple[float, int, int, str]]
+) -> Tuple[Optional[float], str]:
+    """Estratégia padrão: último candidato confiável (evita datas/refs no início)."""
+    if not spans:
+        return None, "no_reliable_span"
+    if len(spans) == 1:
+        return float(spans[0][0]), "single_reliable_comma_amount"
+    return float(spans[-1][0]), "last_reliable_comma_amount"
 
 
 def _raw_looks_like_resumo_line(raw: str) -> bool:
@@ -84,7 +118,6 @@ def _block_excludes_percentage(block: str) -> bool:
 
 
 def _should_consider_receita_percent_heuristic(t: Dict[str, Any]) -> bool:
-    """Só RECEITAS + ITEM (bloco explícito). Sem atalho só por llm_type."""
     raw = str(t.get("raw") or "")
     if _raw_looks_like_resumo_line(raw):
         return False
@@ -102,10 +135,6 @@ def _should_consider_receita_percent_heuristic(t: Dict[str, Any]) -> bool:
 
 
 def is_percentage_context(raw: str, block: str) -> Tuple[bool, str]:
-    """
-    Contexto seguro para tratar o último número como % de composição (receitas tabulares).
-    Todas as condições precisam passar.
-    """
     if _block_excludes_percentage(block):
         return False, "block_not_receitas"
     if block != "RECEITAS":
@@ -122,13 +151,13 @@ def is_percentage_context(raw: str, block: str) -> Tuple[bool, str]:
     return True, "ok"
 
 
+def _money_spans_with_comma_decimal(line: str) -> List[Tuple[float, int, int, str]]:
+    return reliable_comma_money_spans(line)
+
+
 def _trailing_value_and_composition_percent(
     raw: str,
 ) -> Optional[Tuple[float, float, int]]:
-    """
-    Dois últimos números com vírgula no fim da linha; último em [0,100];
-    penúltimo claramente montante vs. percentual (evita 1,00 + 42,36).
-    """
     spans = _money_spans_with_comma_decimal(raw)
     if len(spans) < 2:
         return None
@@ -136,7 +165,7 @@ def _trailing_value_and_composition_percent(
         return None
     pen_val, pen_start, pen_end, _ = spans[-2]
     last_val, last_start, last_end, _ = spans[-1]
-    if raw[last_end :].strip():
+    if raw[last_end:].strip():
         return None
     between = raw[pen_end:last_start]
     if between.strip():
@@ -145,7 +174,6 @@ def _trailing_value_and_composition_percent(
         return None
     if not (pen_val > last_val + 1e-9 or last_val >= 99.0 - 1e-9):
         return None
-    # Último é quase sempre < 100% composto; exige razão mínima pen/último (exceto total 100,00)
     if last_val < 99.0 - 1e-9:
         if pen_val + 1e-9 < last_val * 3.0:
             return None
@@ -153,18 +181,7 @@ def _trailing_value_and_composition_percent(
     return (pen_val, last_val, sel_index)
 
 
-def _last_comma_amount_value(raw: str) -> Optional[float]:
-    spans = _money_spans_with_comma_decimal(raw)
-    if not spans:
-        return None
-    return float(spans[-1][0])
-
-
 def refine_trailing_composition_amounts(tokens: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Em RECEITAS tabulares (DOM FELIPE e similares), valor = penúltimo e % = último.
-    Em despesas com data / lançamento, força último valor com vírgula (corrige primeiro match ruim).
-    """
     for t in tokens:
         raw = str(t.get("raw") or "")
         block = str(t.get("block") or "")
@@ -173,23 +190,19 @@ def refine_trailing_composition_amounts(tokens: List[Dict[str, Any]]) -> List[Di
         t["percentage_detected"] = False
         t["percentage_reason"] = ""
         t["rejected_percentage_reason"] = ""
-        t["value_selection_strategy"] = "first_money"
+        t["value_selection_strategy"] = str(
+            t.get("value_selection_strategy") or "last_reliable_comma"
+        )
 
-        # Despesas: datas ou típico lançamento → último valor monetário (vírgula), nunca %.
-        if (
-            block == "DESPESAS"
-            and typ == "ITEM"
-            and (_RE_LINE_HAS_DATE.search(raw) or _RE_LANCAMENTO_HINT.search(raw))
-        ):
-            last_v = _last_comma_amount_value(raw)
-            if last_v is not None:
-                t["valor"] = last_v
-                t["value_selection_strategy"] = "last_money_lancamento_line"
-                t["rejected_percentage_reason"] = (
-                    "despesa_data_ou_lancamento_usa_ultimo_valor"
-                )
+        # Despesas: sempre último montante confiável (vírgula), nunca %.
+        if block == "DESPESAS" and typ == "ITEM":
+            spans = reliable_comma_money_spans(raw)
+            if spans:
+                t["valor"] = float(spans[-1][0])
+                t["value_selection_strategy"] = "despesa_last_reliable_amount"
+                t["rejected_percentage_reason"] = "despesa_forca_ultimo_montante"
             else:
-                t["rejected_percentage_reason"] = "despesa_lancamento_sem_valor_com_virgula"
+                t["rejected_percentage_reason"] = "despesa_sem_montante_com_virgula"
             continue
 
         if not _should_consider_receita_percent_heuristic(t):
@@ -235,25 +248,27 @@ def _is_mostly_upper(s: str) -> bool:
 
 
 def tokenize(lines: List[str]) -> List[Dict[str, Any]]:
-    """Transforma linhas brutas em tokens com heurísticas de valor e formato."""
+    """Linhas já pré-normalizadas (OCR) em parse_balancete; extrai valor por candidatos confiáveis."""
     out: List[Dict[str, Any]] = []
     for raw in lines:
         if not raw or not str(raw).strip():
             continue
         raw = str(raw).strip()
         clean = " ".join(raw.lower().split())
-        valor = _first_money_value(raw)
+        spans = reliable_comma_money_spans(raw)
+        valor, strat = _select_initial_valor_from_spans(raw, spans)
         has_currency = "R$" in raw or "r$" in raw
         out.append(
             {
                 "raw": raw,
                 "clean": clean,
                 "valor": valor,
-                "money_count": _count_money_tokens(raw),
+                "money_count": len(spans),
                 "has_currency": has_currency,
                 "is_upper": _is_mostly_upper(raw),
                 "block": "UNKNOWN",
                 "type": None,
+                "value_selection_strategy": strat,
             }
         )
     return out

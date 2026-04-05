@@ -1,37 +1,46 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
-# (rótulo bloco, palavras-chave na linha já normalizada)
-_RULES: List[Tuple[str, Tuple[str, ...]]] = [
-    (
-        "RECEITAS",
-        ("receita", "receitas", "créditos", "creditos", "entradas"),
-    ),
-    (
-        "DESPESAS",
-        ("despesa", "despesas", "débitos", "debitos", "saídas", "saidas"),
-    ),
-    ("RESUMO", ("resumo", "saldo", "resultado")),
-    (
-        "CONTAS",
-        ("conta", "banco", "corrente", "aplicação", "aplicacao"),
-    ),
+# (regex sobre `clean` já em minúsculas, desde o início da linha, rótulo)
+_HEADER_RULES: List[Tuple[str, str]] = [
+    (r"^resumo\s+das\s+contas\b", "CONTAS"),
+    (r"^contas\s+correntes\b", "CONTAS"),
+    (r"^contas\b", "CONTAS"),
+    (r"^resumo\s+do\s+m[eê]s\b", "RESUMO"),
+    (r"^data\s+fornecedor\s*\(\s*\+\s*\)", "RECEITAS"),
+    (r"^data\s+fornecedor\s*\(\s*-\s*\)", "DESPESAS"),
+    (r"^receitas/hist[oó]rico\b", "RECEITAS"),
+    (r"^despesas/hist[oó]rico\b", "DESPESAS"),
+    (r"^receitas\b", "RECEITAS"),
+    (r"^despesas\b", "DESPESAS"),
+    (r"^resumo\b", "RESUMO"),
+    (r"^saldo\s+anterior\b", "CONTAS"),
 ]
 
 
-def _match_block(clean: str) -> str | None:
-    for label, keys in _RULES:
-        if any(k in clean for k in keys):
+def is_strong_block_header(raw: str, clean: str) -> Optional[str]:
+    """
+    Cabeçalho forte de seção: só no início da linha (após normalizar espaços).
+    Não dispara com 'receita' ou 'despesa' no meio da descrição (ex.: Receita Federal).
+    """
+    s = (clean or "").strip()
+    if not s:
+        return None
+    for pat, label in _HEADER_RULES:
+        if re.match(pat, s, re.IGNORECASE):
             return label
     return None
 
 
 def detect_blocks(tokens: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Atribui bloco semântico por cabeçalhos; mantém contexto até o próximo cabeçalho."""
+    """Atribui bloco só em cabeçalhos fortes; mantém contexto até o próximo."""
     current = "UNKNOWN"
     for t in tokens:
-        hit = _match_block(t.get("clean") or "")
+        clean = str(t.get("clean") or "")
+        raw = str(t.get("raw") or "")
+        hit = is_strong_block_header(raw, clean)
         if hit:
             current = hit
             t["block"] = hit
