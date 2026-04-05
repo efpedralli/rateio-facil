@@ -87,7 +87,12 @@ def _build_canonical(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def rows_to_parse_json(rows: List[LinhaNormalizada], file_name: str) -> Dict[str, Any]:
+def rows_to_parse_json(
+    rows: List[LinhaNormalizada],
+    file_name: str,
+    *,
+    parser_layout_id: str = "leitor_balancete_v1",
+) -> Dict[str, Any]:
     entries: List[Dict[str, Any]] = []
     resumo_contas: List[Dict[str, Any]] = []
     issues: List[Dict[str, Any]] = []
@@ -222,7 +227,7 @@ def rows_to_parse_json(rows: List[LinhaNormalizada], file_name: str) -> Dict[str
         "fileName": file_name,
         "competenceLabel": periodo or None,
         "condominiumName": condominio or None,
-        "parserLayoutId": "leitor_balancete_v1",
+        "parserLayoutId": parser_layout_id,
         "blocksDetected": [b for b in blocks_detected if b],
     }
 

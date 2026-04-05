@@ -13,6 +13,20 @@ function resolvePythonBinary(): string {
 
 const LOG = "[balancete]";
 
+/** Remove linhas antes do primeiro `{` (logs acidentais no stdout que quebram JSON.parse). */
+function parseBalanceteJsonStdout(out: string): unknown {
+  const lines = out.split(/\r?\n/);
+  let start = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trimStart().startsWith("{")) {
+      start = i;
+      break;
+    }
+  }
+  const jsonText = lines.slice(start).join("\n").trim();
+  return JSON.parse(jsonText) as unknown;
+}
+
 /**
  * Executa `scripts/balancete/parse_balancete_pdf.py` e retorna o JSON do stdout.
  */
@@ -63,7 +77,7 @@ export async function runBalanceteParser(pdfAbsPath: string, fileName: string): 
       }
       console.log(`${LOG} [python] ok em ${ms}ms | stdout chars=${out.length}`);
       try {
-        resolve(JSON.parse(out) as unknown);
+        resolve(parseBalanceteJsonStdout(out));
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         console.error(`${LOG} [python] JSON inválido após ${ms}ms`);

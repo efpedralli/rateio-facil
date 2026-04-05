@@ -146,7 +146,10 @@ export async function POST(req: NextRequest) {
         ok: false,
         success: false,
         id: jobId,
-        error: "Falha no processamento. Verifique o ambiente Python (venv) e dependências do balancete.",
+        error:
+          message.length > 0 && message.length < 800
+            ? message
+            : "Falha no processamento. Verifique o ambiente Python (.venv), dependências em scripts/balancete/requirements.txt e os logs do servidor.",
       },
       { status: 500 }
     );
