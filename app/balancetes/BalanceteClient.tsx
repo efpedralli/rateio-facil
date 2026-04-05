@@ -25,6 +25,7 @@ type UploadApiResponse = {
   issues?: BalanceteValidationIssue[];
   validationSummary?: BalanceteValidationSummary;
   downloadUrl?: string | null;
+  seensDownloadUrl?: string | null;
   error?: string;
 };
 
@@ -58,6 +59,7 @@ export default function BalanceteClient({ userRole, userEmail }: Props) {
   const [summary, setSummary] = useState<BalanceteJobSummary | null>(null);
   const [issues, setIssues] = useState<BalanceteValidationIssue[]>([]);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [seensDownloadUrl, setSeensDownloadUrl] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -90,6 +92,7 @@ export default function BalanceteClient({ userRole, userEmail }: Props) {
     setSummary(null);
     setIssues([]);
     setDownloadUrl(null);
+    setSeensDownloadUrl(null);
     setJobId(null);
 
     try {
@@ -108,12 +111,14 @@ export default function BalanceteClient({ userRole, userEmail }: Props) {
         setSummary(payload.summary ?? null);
         setJobId(payload.id ?? null);
         setDownloadUrl(payload.downloadUrl ?? null);
+        setSeensDownloadUrl(payload.seensDownloadUrl ?? null);
         throw new Error(payload.error || "Falha no upload ou processamento.");
       }
 
       setSummary(payload.summary ?? null);
       setIssues(coerceIssues(payload.issues));
       setDownloadUrl(payload.downloadUrl ?? null);
+      setSeensDownloadUrl(payload.seensDownloadUrl ?? null);
       setJobId(payload.id ?? null);
 
       if (payload.downloadUrl) {
@@ -144,6 +149,7 @@ export default function BalanceteClient({ userRole, userEmail }: Props) {
     setSummary(null);
     setIssues([]);
     setDownloadUrl(null);
+    setSeensDownloadUrl(null);
     setJobId(null);
   }
 
@@ -238,6 +244,12 @@ export default function BalanceteClient({ userRole, userEmail }: Props) {
 
         <div style={styles.actions}>
           <BalanceteDownloadButton downloadUrl={downloadUrl} disabled={busy} />
+          <BalanceteDownloadButton
+            downloadUrl={seensDownloadUrl}
+            disabled={busy}
+            label="Gerar modelo seens"
+            variant="secondary"
+          />
           {(pageState === "done" || pageState === "error") && (
             <button type="button" onClick={handleReset} style={styles.secondaryBtn}>
               Novo upload

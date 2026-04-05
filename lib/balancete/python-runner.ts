@@ -151,6 +151,65 @@ export async function runBalanceteExportXlsx(
 }
 
 /**
+ * Gera XLSX no layout Seens a partir do mesmo JSON canônico (`export_excel_seens.py`).
+ */
+export async function runBalanceteExportSeensXlsx(
+  jsonAbsPath: string,
+  xlsxAbsPath: string
+): Promise<void> {
+  const py = resolvePythonBinary();
+  const script = path.join(process.cwd(), "scripts", "balancete", "export_excel_seens.py");
+
+  return new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    console.log(
+      `${LOG} [python] export seens | json=${jsonAbsPath} | out=${xlsxAbsPath}`
+    );
+
+    const proc = spawn(py, [script, jsonAbsPath, xlsxAbsPath], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let err = "";
+
+    proc.stderr.on("data", (d) => {
+      const chunk = d.toString("utf-8");
+      err += chunk;
+      for (const line of chunk.split(/\r?\n/)) {
+        const t = line.trim();
+        if (t) console.log(`${LOG} [export-seens] ${t}`);
+      }
+    });
+
+    proc.stdout.on("data", (d) => {
+      const s = d.toString("utf-8").trim();
+      if (s) console.log(`${LOG} [export-seens] ${s}`);
+    });
+
+    proc.on("error", (e) => {
+      reject(new Error(`Falha ao iniciar exportador Seens (Python): ${e.message}`));
+    });
+
+    proc.on("close", (code) => {
+      const ms = Date.now() - t0;
+      if (code !== 0) {
+        console.error(
+          `${LOG} [python] export seens falhou em ${ms}ms | exit=${code} | stderr=${err.trim().slice(0, 400)}`
+        );
+        reject(
+          new Error(
+            `Exportador Seens encerrou com código ${code}. ${err.trim().slice(0, 600)}`
+          )
+        );
+        return;
+      }
+      console.log(`${LOG} [python] export seens ok em ${ms}ms`);
+      resolve();
+    });
+  });
+}
+
+/**
  * Alias: parse PDF → JSON canônico num único script (`parse_balancete_pdf.py` + leitor_balancete).
  */
 export const runBalanceteTransformation = runBalanceteParser;

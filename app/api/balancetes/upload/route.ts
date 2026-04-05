@@ -118,6 +118,10 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    const seensDownloadUrl = result.summary.seensXlsxRelativePath
+      ? `/api/balancetes/${encodeURIComponent(jobId)}/download-seens`
+      : null;
+
     return NextResponse.json({
       ok: true,
       success: true,
@@ -126,6 +130,7 @@ export async function POST(req: NextRequest) {
       issues: result.issues,
       validationSummary: result.validationSummary,
       downloadUrl: `/api/balancetes/${encodeURIComponent(jobId)}/download`,
+      seensDownloadUrl,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Erro ao processar balancete.";

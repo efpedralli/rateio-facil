@@ -15,7 +15,8 @@ import { buildCanonicalExportPayload } from "./canonical-export-payload";
 import { mapParsedBalanceteToImportDocument } from "./import-mapper";
 import { normalizeParseResult } from "./normalizers";
 import { entriesLancamentos, buildBalanceteValidationSummary, validateBalancete } from "./validators";
-import { runBalanceteExportXlsx, runBalanceteParser } from "./python-runner";
+import { runBalanceteExportSeensXlsx, runBalanceteExportXlsx, runBalanceteParser } from "./python-runner";
+import { buildSeensOutputRelativePath } from "./seens-export-path";
 
 const LOG = "[balancete]";
 
@@ -118,6 +119,7 @@ export async function processBalanceteJob(params: {
   const issues = [...validation.issues];
   let exportStats: BalanceteExportStats | null = null;
   let fileError = false;
+  let seensXlsxRelativePath: string | undefined;
 
   if (!validation.blocking) {
     try {
@@ -139,6 +141,24 @@ export async function processBalanceteJob(params: {
       console.log(
         `${LOG} job=${jobId} | export concluído em ${Date.now() - tX}ms | lançamentos=${payload.entries.length} contas=${payload.accounts.length}`
       );
+
+      try {
+        const seensRel = buildSeensOutputRelativePath(
+          payload.metadata.condominio,
+          payload.metadata.competencia,
+          payload.metadata.periodo_inicio
+        );
+        const seensAbs = path.join(
+          process.cwd(),
+          ...seensRel.split("/").filter(Boolean)
+        );
+        await runBalanceteExportSeensXlsx(jsonPath, seensAbs);
+        seensXlsxRelativePath = seensRel;
+        console.log(`${LOG} job=${jobId} | export Seens → ${seensRel}`);
+      } catch (seensErr) {
+        const sm = seensErr instanceof Error ? seensErr.message : String(seensErr);
+        console.warn(`${LOG} job=${jobId} | export Seens não gerado | ${sm.slice(0, 300)}`);
+      }
     } catch (e) {
       fileError = true;
       const msg = e instanceof Error ? e.message : String(e);
@@ -154,7 +174,10 @@ export async function processBalanceteJob(params: {
   }
 
   const validationSummary = buildBalanceteValidationSummary(issues, exportStats ?? undefined);
-  const summary = buildSummary(parse, issues, exportStats, validationSummary);
+  const summary: BalanceteJobSummary = {
+    ...buildSummary(parse, issues, exportStats, validationSummary),
+    ...(seensXlsxRelativePath ? { seensXlsxRelativePath } : {}),
+  };
 
   const blocking = validation.blocking || fileError;
 

@@ -134,6 +134,8 @@ export type BalanceteJobSummary = {
     dataRowsWritten?: number;
     sectionCount?: number;
   };
+  /** Caminho relativo ao cwd do arquivo XLSX layout Seens (`outputs/..._seens.xlsx`), se gerado. */
+  seensXlsxRelativePath?: string | null;
   /** Resumo booleano das checagens contábeis (persistido em `BalanceteJob.summary`). */
   validationSummary?: BalanceteValidationSummary;
 };
