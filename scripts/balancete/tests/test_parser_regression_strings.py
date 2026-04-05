@@ -13,6 +13,7 @@ if str(BALANCETE_DIR) not in sys.path:
 
 from block_detector import detect_blocks, is_strong_block_header  # noqa: E402
 from line_classifier import classify_lines  # noqa: E402
+from normalizer import normalize  # noqa: E402
 from tokenizer import (  # noqa: E402
     pre_normalize_line_for_ocr,
     refine_trailing_composition_amounts,
@@ -27,6 +28,10 @@ def _run_pipeline(lines: list[str]) -> list[dict]:
     tokens = classify_lines(tokens)
     tokens = refine_trailing_composition_amounts(tokens)
     return tokens
+
+
+def _run_pipeline_normalized(lines: list[str]) -> dict:
+    return normalize(_run_pipeline(lines))
 
 
 def _find_line_token(tokens: list[dict], substr: str) -> dict:
@@ -61,6 +66,75 @@ def test_belle_receitas_financeiras_total_grupo():
     raw = "Receitas Financeiras - Total Grupo R$ 8.777,32"
     t = _run_pipeline([raw])[0]
     assert t["valor"] == pytest.approx(8777.32)
+
+
+def test_belle_receitas_financeiras_sicredi_sao_item_receitas_nao_conta():
+    """Linhas com BANCO+aplica no bloco RECEITAS não podem virar CONTA (sumiam do normalizer)."""
+    lines = [
+        "Data Fornecedor (+) Receitas Financeiras Valor",
+        (
+            "28/02/2026 BANCO COOPERATIVO SICREDI S.A. RENDIMENTO PROVISIONADO: "
+            "JUROS - IRRF DE APLICAÇÃO FINANCEIRA R$ 938,98"
+        ),
+        "28/02/2026 BANCO COOPERATIVO SICREDI S.A. RENDIMENTO - JUROS DE POUPANÇA R$ 363,34",
+        (
+            "27/02/2026 BANCO COOPERATIVO SICREDI S.A. RESGATE DESTINADO À ENTRADA "
+            "50% COMPRA DA PORTA PRINCIPAL DO HALL R$ 7.475,00"
+        ),
+        "Receitas Financeiras - Total Grupo R$ 8.777,32",
+    ]
+    tokens = _run_pipeline(lines)
+    by_raw = {t["raw"]: t for t in tokens if t.get("raw")}
+    r1 = by_raw[lines[1]]
+    r2 = by_raw[lines[2]]
+    r3 = by_raw[lines[3]]
+    rtot = by_raw[lines[4]]
+    assert r1["block"] == "RECEITAS" and r1["type"] == "ITEM" and r1["valor"] == pytest.approx(938.98)
+    assert r2["block"] == "RECEITAS" and r2["type"] == "ITEM" and r2["valor"] == pytest.approx(363.34)
+    assert r3["block"] == "RECEITAS" and r3["type"] == "ITEM" and r3["valor"] == pytest.approx(7475.00)
+    assert rtot["block"] == "RECEITAS" and rtot["type"] == "TOTAL" and rtot["valor"] == pytest.approx(8777.32)
+
+
+def test_belle_receitas_financeiras_normalize_soma_grupo():
+    lines = [
+        "Data Fornecedor (+) Receitas Financeiras Valor",
+        (
+            "28/02/2026 BANCO COOPERATIVO SICREDI S.A. RENDIMENTO PROVISIONADO: "
+            "JUROS - IRRF DE APLICAÇÃO FINANCEIRA R$ 938,98"
+        ),
+        "28/02/2026 BANCO COOPERATIVO SICREDI S.A. RENDIMENTO - JUROS DE POUPANÇA R$ 363,34",
+        (
+            "27/02/2026 BANCO COOPERATIVO SICREDI S.A. RESGATE DESTINADO À ENTRADA "
+            "50% COMPRA DA PORTA PRINCIPAL DO HALL R$ 7.475,00"
+        ),
+        "Receitas Financeiras - Total Grupo R$ 8.777,32",
+    ]
+    data = _run_pipeline_normalized(lines)
+    items = [
+        e
+        for e in data.get("entries") or []
+        if e.get("bloco") == "RECEITAS" and e.get("tipo") == "item"
+    ]
+    assert len(items) == 3
+    assert sum(float(e["valor"]) for e in items) == pytest.approx(8777.32)
+    totals = [e for e in data.get("entries") or [] if e.get("tipo") == "total"]
+    assert len(totals) == 1
+    assert totals[0]["valor"] == pytest.approx(8777.32)
+
+
+def test_contas_numeradas_permanecem_tipo_conta():
+    lines = [
+        "Resumo das Contas",
+        "01 - Saldo Anterior 8.302,37",
+        "02 - Créditos 37.026,65",
+        "03 - Débitos (27.902,23)",
+        "04 - Transferência (-) (5.181,89)",
+    ]
+    tokens = _run_pipeline(lines)[1:]
+    assert tokens[0]["type"] == "CONTA" and tokens[0]["valor"] == pytest.approx(8302.37)
+    assert tokens[1]["type"] == "CONTA" and tokens[1]["valor"] == pytest.approx(37026.65)
+    assert tokens[2]["type"] == "CONTA" and tokens[2]["valor"] == pytest.approx(27902.23)
+    assert tokens[3]["type"] == "CONTA" and tokens[3]["valor"] == pytest.approx(5181.89)
 
 
 def test_belle_linha_com_despesas_no_meio_permance_receitas():
