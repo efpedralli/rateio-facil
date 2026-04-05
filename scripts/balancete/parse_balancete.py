@@ -9,7 +9,7 @@ from extract_pdf import extract_pdf_content
 from line_classifier import classify_lines
 from llm_fallback import classify_with_llm
 from normalizer import normalize
-from tokenizer import tokenize
+from tokenizer import refine_trailing_composition_amounts, tokenize
 from validator import validate
 
 
@@ -20,6 +20,7 @@ def parse_pdf(path: Union[str, Path]) -> Dict[str, Any]:
     tokens = tokenize(content["text_lines"])
     tokens = detect_blocks(tokens)
     tokens = classify_lines(tokens)
+    tokens = refine_trailing_composition_amounts(tokens)
 
     normalized = normalize(tokens)
     validated = validate(normalized)
@@ -39,6 +40,7 @@ def parse_pdf(path: Union[str, Path]) -> Dict[str, Any]:
         print("[WARN] Usando LLM fallback", file=sys.stderr)
 
         tokens = classify_with_llm(tokens)
+        tokens = refine_trailing_composition_amounts(tokens)
         normalized = normalize(tokens)
         validated = validate(normalized)
 
