@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
       const firstErr = result.issues.find((i) => i.type === "ERROR");
       const errMsg =
         firstErr?.message ??
-        "Não foi possível gerar o arquivo de importação. Verifique o PDF, o layout ou o modelo em models/.";
+        "Não foi possível gerar o arquivo de importação. Verifique o PDF ou o layout.";
 
       await prisma.balanceteJob.update({
         where: { id: jobId },
@@ -99,6 +99,7 @@ export async function POST(req: NextRequest) {
         issues: result.issues,
         validationSummary: result.validationSummary,
         downloadUrl: null,
+        exportPayload: result.exportPayload,
         error: errMsg,
       });
     }
@@ -118,6 +119,10 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    const seensDownloadUrl = result.summary.seensXlsxRelativePath
+      ? `/api/balancetes/${encodeURIComponent(jobId)}/download-seens`
+      : null;
+
     return NextResponse.json({
       ok: true,
       success: true,
@@ -126,6 +131,8 @@ export async function POST(req: NextRequest) {
       issues: result.issues,
       validationSummary: result.validationSummary,
       downloadUrl: `/api/balancetes/${encodeURIComponent(jobId)}/download`,
+      seensDownloadUrl,
+      exportPayload: result.exportPayload,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Erro ao processar balancete.";
@@ -146,7 +153,10 @@ export async function POST(req: NextRequest) {
         ok: false,
         success: false,
         id: jobId,
-        error: "Falha no processamento. Verifique o ambiente Python (venv) e dependências do balancete.",
+        error:
+          message.length > 0 && message.length < 800
+            ? message
+            : "Falha no processamento. Verifique o ambiente Python (.venv), dependências em scripts/balancete/requirements.txt e os logs do servidor.",
       },
       { status: 500 }
     );

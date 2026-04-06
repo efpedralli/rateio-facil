@@ -1,19 +1,25 @@
 /**
- * Orquestração: parser Python → normalização → validação → documento de importação → XLSX final (modelo Belle).
+ * Orquestração: parser Python → normalização → validação → documento de importação → XLSX padrão (Python/openpyxl).
  */
 
+import fs from "fs/promises";
 import path from "path";
 import type { BalanceteImportDocument, BalanceteValidationSummary } from "./import-types";
-import type { BalanceteJobSummary, BalanceteParseResult, BalanceteValidationIssue } from "./types";
+import type {
+  BalanceteExportStats,
+  BalanceteJobSummary,
+  BalanceteParseResult,
+  BalanceteValidationIssue,
+} from "./types";
 import {
-  exportBelleChateauImportXlsx,
-  resolveBelleTemplateXlsPath,
-  type BelleExportStats,
-} from "./import-xlsx-exporter";
+  buildCanonicalExportPayload,
+  type CanonicalBalanceteExportPayload,
+} from "./canonical-export-payload";
 import { mapParsedBalanceteToImportDocument } from "./import-mapper";
 import { normalizeParseResult } from "./normalizers";
 import { entriesLancamentos, buildBalanceteValidationSummary, validateBalancete } from "./validators";
-import { runBalanceteParser } from "./python-runner";
+import { runBalanceteExportSeensXlsx, runBalanceteExportXlsx, runBalanceteParser } from "./python-runner";
+import { buildSeensOutputRelativePath } from "./seens-export-path";
 
 const LOG = "[balancete]";
 
@@ -25,6 +31,8 @@ export type ProcessBalanceteResult = {
   validationSummary: BalanceteValidationSummary;
   xlsxRelativePath: string;
   blocking: boolean;
+  /** JSON canônico consumido por `export_excel_seens.py` / `export_xlsx.py`, quando o processamento chegou a montar o payload. */
+  exportPayload: CanonicalBalanceteExportPayload | null;
 };
 
 function countGroups(entries: BalanceteParseResult["entries"]): number {
@@ -40,7 +48,7 @@ function countGroups(entries: BalanceteParseResult["entries"]): number {
 function buildSummary(
   parse: BalanceteParseResult,
   issues: BalanceteValidationIssue[],
-  exportStats: BelleExportStats | null,
+  exportStats: BalanceteExportStats | null,
   validationSummary: BalanceteValidationSummary
 ): BalanceteJobSummary {
   const lan = entriesLancamentos(parse.entries);
@@ -70,6 +78,8 @@ function buildSummary(
           filledCells: exportStats.filledCells,
           unmatchedPoolLines: exportStats.unmatchedPoolLines,
           unusedTemplateSlots: exportStats.unusedTemplateSlots,
+          dataRowsWritten: exportStats.dataRowsWritten,
+          sectionCount: exportStats.sectionCount,
         }
       : undefined,
     validationSummary,
@@ -77,7 +87,7 @@ function buildSummary(
 }
 
 /**
- * Processa PDF e grava XLSX final no layout do modelo `models/*Belle*modelo*.xls`.
+ * Processa PDF e grava XLSX padrão (três abas) via `scripts/balancete/export_xlsx.py`.
  */
 export async function processBalanceteJob(params: {
   jobId: string;
@@ -112,46 +122,69 @@ export async function processBalanceteJob(params: {
   const xlsxRelativePath = path.join("uploads", "balancetes", jobId, "saida.xlsx").replace(/\\/g, "/");
 
   const issues = [...validation.issues];
-  let exportStats: BelleExportStats | null = null;
+  let exportStats: BalanceteExportStats | null = null;
   let fileError = false;
+  let seensXlsxRelativePath: string | undefined;
+  let exportPayload: CanonicalBalanceteExportPayload | null = null;
 
   if (!validation.blocking) {
-    const tpl = resolveBelleTemplateXlsPath();
-    if (!tpl) {
-      console.warn(`${LOG} job=${jobId} | export | modelo .xls não encontrado em models/`);
+    try {
+      const payload = buildCanonicalExportPayload(parse);
+      exportPayload = payload;
+      const jsonPath = path.join(outDir, "canonical_export.json");
+      await fs.writeFile(jsonPath, JSON.stringify(payload), "utf-8");
+      const tX = Date.now();
+      console.log(`${LOG} job=${jobId} | export XLSX (sem template) → ${xlsxAbs}`);
+      await runBalanceteExportXlsx(jsonPath, xlsxAbs);
+      const dataRows =
+        payload.entries.length + Object.keys(payload.summary).length + payload.accounts.length;
+      exportStats = {
+        filledCells: payload.entries.length,
+        unmatchedPoolLines: 0,
+        unusedTemplateSlots: 0,
+        dataRowsWritten: dataRows,
+        sectionCount: 3,
+      };
+      console.log(
+        `${LOG} job=${jobId} | export concluído em ${Date.now() - tX}ms | lançamentos=${payload.entries.length} contas=${payload.accounts.length}`
+      );
+
+      try {
+        const seensRel = buildSeensOutputRelativePath(
+          payload.metadata.condominio,
+          payload.metadata.competencia,
+          payload.metadata.periodo_inicio
+        );
+        const seensAbs = path.join(
+          process.cwd(),
+          ...seensRel.split("/").filter(Boolean)
+        );
+        await runBalanceteExportSeensXlsx(jsonPath, seensAbs);
+        seensXlsxRelativePath = seensRel;
+        console.log(`${LOG} job=${jobId} | export Seens → ${seensRel}`);
+      } catch (seensErr) {
+        const sm = seensErr instanceof Error ? seensErr.message : String(seensErr);
+        console.warn(`${LOG} job=${jobId} | export Seens não gerado | ${sm.slice(0, 300)}`);
+      }
+    } catch (e) {
+      fileError = true;
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`${LOG} job=${jobId} | export falhou | ${msg.slice(0, 400)}`);
       issues.push({
         type: "ERROR",
-        code: "NO_IMPORT_TEMPLATE",
-        message:
-          "Modelo de importação não encontrado. Coloque o arquivo .xls do balancete em `models/` (ex.: BELLE CHATEAU 2 - modelo importação.xls).",
+        code: "EXPORT_XLSX_FAILED",
+        message: `Falha ao gerar a planilha de importação: ${msg}`,
       });
-      fileError = true;
-    } else {
-      const tX = Date.now();
-      console.log(`${LOG} job=${jobId} | export XLSX | template=${tpl} → ${xlsxAbs}`);
-      exportStats = exportBelleChateauImportXlsx(tpl, xlsxAbs, parse);
-      console.log(
-        `${LOG} job=${jobId} | export concluído em ${Date.now() - tX}ms | filled=${exportStats.filledCells} unmatchedPool=${exportStats.unmatchedPoolLines} unusedSlots=${exportStats.unusedTemplateSlots}`
-      );
-      if (exportStats.unmatchedPoolLines > 0 || exportStats.unusedTemplateSlots > 0) {
-        issues.push({
-          type: "WARNING",
-          code: "IMPORT_FILL_PARTIAL",
-          message: `Preenchimento do modelo: ${exportStats.unmatchedPoolLines} linha(s) extraída(s) sem célula correspondente; ${exportStats.unusedTemplateSlots} linha(s) do modelo sem valor.`,
-          details: {
-            filledCells: exportStats.filledCells,
-            unmatchedPoolLines: exportStats.unmatchedPoolLines,
-            unusedTemplateSlots: exportStats.unusedTemplateSlots,
-          },
-        });
-      }
     }
   } else {
     console.warn(`${LOG} job=${jobId} | export ignorado (validação bloqueante)`);
   }
 
   const validationSummary = buildBalanceteValidationSummary(issues, exportStats ?? undefined);
-  const summary = buildSummary(parse, issues, exportStats, validationSummary);
+  const summary: BalanceteJobSummary = {
+    ...buildSummary(parse, issues, exportStats, validationSummary),
+    ...(seensXlsxRelativePath ? { seensXlsxRelativePath } : {}),
+  };
 
   const blocking = validation.blocking || fileError;
 
@@ -167,5 +200,6 @@ export async function processBalanceteJob(params: {
     validationSummary,
     xlsxRelativePath: blocking ? "" : xlsxRelativePath,
     blocking,
+    exportPayload,
   };
 }

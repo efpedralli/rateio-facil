@@ -1,0 +1,13 @@
+ENTRADA|89988.59|Acumulado CompetÛncia Anterior - Fundo de Obra R$ 89.988,59
+ENTRADA|4840.0|Receita Mensal - Fundo de Obra R$ 4.840,00
+ENTRADA|938.98|Receita Financeira - Rendimento AplicaþÒo (Fundo de Obra) R$ 938,98
+SALDO_ATUAL|95767.57|SALDO ATUAL - FUNDO DE OBRA R$ 95.767,57
+ENTRADA|69593.37|Acumulado CompetÛncia Anterior - Fundo de Reserva de Poupanþa Permanente R$ 69.593,37
+ENTRADA|2200.0|Receita Mensal - Fundo de Reserva de Poupanþa Permanente R$ 2.200,00
+ENTRADA|363.34|Receita Financeira - Rendimento Poupanþa (Reserva Permanente) R$ 363,34
+ENTRADA|5407.2|Acumulado CompetÛncia Anterior - Conta Corrente R$ 5.407,20
+ENTRADA|5222.89|Receita de Cotas - Leitura de ┴gua Individual R$ 5.222,89
+ENTRADA|11405.68|Receita de Cotas - Taxa de CondomÝnio - Despesas rateadas mÛs anterior R$ 11.405,68
+ENTRADA|1760.0|Receita Mensal - Fluxo de Caixa de MantenþÒo R$ 1.760,00
+ENTRADA|163.62|Receita Mensal - Aluguel SalÒo de Festas R$ 163,62
+ENTRADA|7475.0|Receita Financeira - Resgate Poupanþa (Reserva Permanente) R$ 7.475,00

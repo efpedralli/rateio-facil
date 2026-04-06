@@ -2,13 +2,10 @@
 
 import Link from "next/link";
 import type { CSSProperties } from "react";
-import { ChangeEvent, useMemo, useState } from "react";
-import { BalanceteDownloadButton } from "@/components/balancete/BalanceteDownloadButton";
-import { BalanceteIssuesList } from "@/components/balancete/BalanceteIssuesList";
-import { BalanceteSummaryCard } from "@/components/balancete/BalanceteSummaryCard";
+import { ChangeEvent, useCallback, useMemo, useState } from "react";
 import { BalanceteUploadCard } from "@/components/balancete/BalanceteUploadCard";
-import type { BalanceteValidationSummary } from "@/lib/balancete/import-types";
-import type { BalanceteJobSummary, BalanceteValidationIssue } from "@/lib/balancete/types";
+import { SeensEditableTable } from "@/components/balancete/SeensEditableTable";
+import type { CanonicalBalanceteExportPayload } from "@/lib/balancete/canonical-export-payload";
 
 type AppRole = "ADMIN" | "OPERATOR";
 
@@ -19,55 +16,23 @@ type Props = {
 
 type UploadApiResponse = {
   ok: boolean;
-  success?: boolean;
   id?: string;
-  summary?: BalanceteJobSummary;
-  issues?: BalanceteValidationIssue[];
-  validationSummary?: BalanceteValidationSummary;
-  downloadUrl?: string | null;
+  exportPayload?: CanonicalBalanceteExportPayload | null;
   error?: string;
 };
 
 type PageState = "idle" | "uploading" | "error" | "done";
 
-function coerceIssues(raw: unknown): BalanceteValidationIssue[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.filter(Boolean) as BalanceteValidationIssue[];
-}
-
-async function downloadBalanceteXlsx(url: string, fileName: string): Promise<void> {
-  const res = await fetch(url, { credentials: "include" });
-  if (!res.ok) {
-    throw new Error("Não foi possível baixar o XLSX automaticamente.");
-  }
-  const blob = await res.blob();
-  const href = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = href;
-  a.download = fileName;
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(href);
-}
-
 export default function BalanceteClient({ userRole, userEmail }: Props) {
   const [pageState, setPageState] = useState<PageState>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [summary, setSummary] = useState<BalanceteJobSummary | null>(null);
-  const [issues, setIssues] = useState<BalanceteValidationIssue[]>([]);
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [data, setData] = useState<CanonicalBalanceteExportPayload | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [seensDownloading, setSeensDownloading] = useState(false);
 
   const busy = pageState === "uploading";
   const statusMessage = busy ? "Enviando e processando PDF…" : null;
-
-  const validationsOk = useMemo(() => {
-    if (!issues.length) return true;
-    return issues.every((i) => i.type !== "ERROR");
-  }, [issues]);
 
   const allowedPages = useMemo(() => {
     const pages: Array<{ href: string; label: string }> = [
@@ -80,6 +45,14 @@ export default function BalanceteClient({ userRole, userEmail }: Props) {
     return pages;
   }, [userRole]);
 
+  const pdfSrc = jobId
+    ? `/api/balancetes/${encodeURIComponent(jobId)}/pdf`
+    : null;
+
+  const onDataChange = useCallback((next: CanonicalBalanceteExportPayload) => {
+    setData(next);
+  }, []);
+
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const input = event.target;
     const file = input.files?.[0];
@@ -87,9 +60,7 @@ export default function BalanceteClient({ userRole, userEmail }: Props) {
 
     setPageState("uploading");
     setErrorMessage(null);
-    setSummary(null);
-    setIssues([]);
-    setDownloadUrl(null);
+    setData(null);
     setJobId(null);
 
     try {
@@ -104,30 +75,17 @@ export default function BalanceteClient({ userRole, userEmail }: Props) {
       const payload = (await response.json()) as UploadApiResponse;
 
       if (!response.ok || !payload.ok) {
-        setIssues(coerceIssues(payload.issues));
-        setSummary(payload.summary ?? null);
         setJobId(payload.id ?? null);
-        setDownloadUrl(payload.downloadUrl ?? null);
         throw new Error(payload.error || "Falha no upload ou processamento.");
       }
 
-      setSummary(payload.summary ?? null);
-      setIssues(coerceIssues(payload.issues));
-      setDownloadUrl(payload.downloadUrl ?? null);
-      setJobId(payload.id ?? null);
-
-      if (payload.downloadUrl) {
-        const baseName = file.name.replace(/\.pdf$/i, "") || "balancete";
-        try {
-          await downloadBalanceteXlsx(
-            payload.downloadUrl,
-            `${baseName}_importacao.xlsx`
-          );
-        } catch (dlErr) {
-          console.error("[balancetes] download automático:", dlErr);
-        }
+      if (!payload.exportPayload) {
+        setJobId(payload.id ?? null);
+        throw new Error("Resposta sem dados estruturados para o modelo Seens.");
       }
 
+      setData(payload.exportPayload);
+      setJobId(payload.id ?? null);
       setPageState("done");
     } catch (e) {
       const message = e instanceof Error ? e.message : "Erro inesperado.";
@@ -138,12 +96,55 @@ export default function BalanceteClient({ userRole, userEmail }: Props) {
     }
   }
 
+  const handleDownloadSeens = useCallback(async () => {
+    if (!jobId || !data) return;
+    setSeensDownloading(true);
+    setErrorMessage(null);
+    try {
+      const res = await fetch(
+        `/api/balancetes/${encodeURIComponent(jobId)}/build-seens`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+          credentials: "include",
+        }
+      );
+      if (!res.ok) {
+        let msg = "Falha ao gerar XLSX.";
+        try {
+          const j = (await res.json()) as { error?: string };
+          if (j.error) msg = j.error;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition");
+      let fileName = "modelo_seens.xlsx";
+      const m = cd?.match(/filename="([^"]+)"/);
+      if (m) fileName = decodeURIComponent(m[1]);
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = fileName;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(href);
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : "Erro ao baixar.");
+    } finally {
+      setSeensDownloading(false);
+    }
+  }, [jobId, data]);
+
   function handleReset() {
     setPageState("idle");
     setErrorMessage(null);
-    setSummary(null);
-    setIssues([]);
-    setDownloadUrl(null);
+    setData(null);
     setJobId(null);
   }
 
@@ -218,32 +219,39 @@ export default function BalanceteClient({ userRole, userEmail }: Props) {
 
         {errorMessage ? <p style={styles.errorText}>{errorMessage}</p> : null}
 
-        {jobId ? (
-          <p style={styles.metaLine}>
-            ID do processamento: <strong>{jobId}</strong>
-          </p>
+        {pageState === "done" && jobId && data ? (
+          <div style={styles.gridSection}>
+            <div style={styles.previewCard}>
+              <header style={styles.cardHeader}>
+                <h2 style={styles.cardTitle}>PDF original</h2>
+              </header>
+              <div style={styles.previewWrapper}>
+                {pdfSrc ? (
+                  <iframe
+                    src={pdfSrc}
+                    title="PDF do balancete"
+                    style={styles.previewFrame}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            <SeensEditableTable
+              data={data}
+              onDataChange={onDataChange}
+              downloading={seensDownloading}
+              onDownload={handleDownloadSeens}
+            />
+          </div>
         ) : null}
 
-        <div style={styles.grid}>
-          <BalanceteSummaryCard
-            summary={summary}
-            validationsOk={summary ? validationsOk : null}
-          />
-
-          <div style={styles.card}>
-            <h2 style={styles.cardTitle}>Validações e avisos</h2>
-            <BalanceteIssuesList issues={issues} />
-          </div>
-        </div>
-
-        <div style={styles.actions}>
-          <BalanceteDownloadButton downloadUrl={downloadUrl} disabled={busy} />
-          {(pageState === "done" || pageState === "error") && (
+        {(pageState === "done" || pageState === "error") && (
+          <div style={styles.footerActions}>
             <button type="button" onClick={handleReset} style={styles.secondaryBtn}>
               Novo upload
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </section>
     </main>
   );
@@ -257,7 +265,7 @@ const styles: Record<string, CSSProperties> = {
   },
   header: {
     margin: "0 auto 20px auto",
-    maxWidth: "960px",
+    maxWidth: "1400px",
     background: "#ffffff",
     border: "1px solid #e5e7eb",
     borderRadius: "12px",
@@ -347,7 +355,7 @@ const styles: Record<string, CSSProperties> = {
   },
   main: {
     margin: "0 auto",
-    maxWidth: "960px",
+    maxWidth: "1400px",
     display: "flex",
     flexDirection: "column",
     gap: "16px",
@@ -357,20 +365,42 @@ const styles: Record<string, CSSProperties> = {
     color: "#b91c1c",
     fontSize: "0.9rem",
   },
-  metaLine: { margin: 0, fontSize: "0.88rem", color: "#4b5563" },
-  grid: {
+  gridSection: {
     display: "grid",
     gap: "16px",
-    gridTemplateColumns: "minmax(0, 1fr)",
+    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
   },
-  card: {
+  previewCard: {
     border: "1px solid #e5e7eb",
     borderRadius: "12px",
-    padding: "16px",
     background: "#ffffff",
+    display: "flex",
+    flexDirection: "column",
+    minHeight: "520px",
+    overflow: "hidden",
   },
-  cardTitle: { margin: "0 0 12px 0", fontSize: "1rem", fontWeight: 600 },
-  actions: {
+  cardHeader: {
+    padding: "14px 16px",
+    borderBottom: "1px solid #e5e7eb",
+  },
+  cardTitle: {
+    margin: 0,
+    fontSize: "1rem",
+    fontWeight: 600,
+  },
+  previewWrapper: {
+    flex: 1,
+    minHeight: 0,
+    padding: 0,
+  },
+  previewFrame: {
+    width: "100%",
+    height: "calc(100vh - 290px)",
+    minHeight: "480px",
+    border: "none",
+    display: "block",
+  },
+  footerActions: {
     display: "flex",
     flexWrap: "wrap",
     gap: "12px",

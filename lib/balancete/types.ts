@@ -99,6 +99,15 @@ export type BalanceteTemplateRow = {
   linhaAuditoria: string | null;
 };
 
+/** Estatísticas do export Python (`export_xlsx.py`), substitui o preenchimento por template .xls. */
+export type BalanceteExportStats = {
+  filledCells: number;
+  unmatchedPoolLines: number;
+  unusedTemplateSlots: number;
+  dataRowsWritten: number;
+  sectionCount: number;
+};
+
 export type BalanceteJobSummary = {
   entryCount: number;
   itemCount: number;
@@ -117,7 +126,7 @@ export type BalanceteJobSummary = {
   receitasGroupCount?: number;
   despesasGroupCount?: number;
   contaTablesCount?: number;
-  /** Preenchimento do modelo XLS (legado Belle) ou export semântico. */
+  /** Estatísticas do exportador Python (planilha padrão, sem template). */
   importFill?: {
     filledCells?: number;
     unmatchedPoolLines?: number;
@@ -125,6 +134,8 @@ export type BalanceteJobSummary = {
     dataRowsWritten?: number;
     sectionCount?: number;
   };
+  /** Caminho relativo ao cwd do arquivo XLSX layout Seens (`outputs/..._seens.xlsx`), se gerado. */
+  seensXlsxRelativePath?: string | null;
   /** Resumo booleano das checagens contábeis (persistido em `BalanceteJob.summary`). */
   validationSummary?: BalanceteValidationSummary;
 };
