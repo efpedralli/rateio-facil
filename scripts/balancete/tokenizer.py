@@ -20,6 +20,34 @@ _RE_REL_MONEY = re.compile(
     re.IGNORECASE,
 )
 
+# Código de pagamento/documento + valor BR (não juntar com heurística de milhar OCR).
+_RE_PAYMENT_CODE_THEN_BR_MONEY = re.compile(
+    r"(?i)\b(?:pix|boleto|guia|débito|debito|transferência|transferencia|"
+    r"aut\.?|nf|nota)\b\s+(\d+)\s+(\d{1,3}(?:\.\d{3})*,\d{2})\b",
+)
+
+# Caractere PUA: não é \s; impede merge "492 310,00" -> "492.310,00" durante pre_normalize.
+_PAYMENT_CODE_VALUE_MERGE_GUARD = "\ue000"
+
+
+def _shield_payment_code_value_splits(s: str) -> str:
+    """Evita fundir código numérico do meio de pagamento com o valor real na mesma linha."""
+    out: List[str] = []
+    pos = 0
+    for m in _RE_PAYMENT_CODE_THEN_BR_MONEY.finditer(s):
+        out.append(s[pos : m.start()])
+        out.append(s[m.start() : m.start(1)])
+        out.append(m.group(1))
+        out.append(_PAYMENT_CODE_VALUE_MERGE_GUARD)
+        out.append(m.group(2))
+        pos = m.end()
+    out.append(s[pos:])
+    return "".join(out)
+
+
+def _unshield_payment_code_value_splits(s: str) -> str:
+    return s.replace(_PAYMENT_CODE_VALUE_MERGE_GUARD, " ")
+
 
 def _normalize_ocr_broken_money(raw: str) -> str:
     """
@@ -60,6 +88,7 @@ def pre_normalize_line_for_ocr(line: str) -> str:
     Preserva datas com barras.
     """
     s = line
+    s = _shield_payment_code_value_splits(s)
     s = re.sub(
         r"(R\$\s*)(\d{1,3})\s+\.(\d{3},\d{2}\b)",
         r"\1\2.\3",
@@ -85,6 +114,7 @@ def pre_normalize_line_for_ocr(line: str) -> str:
         r"\1.\2",
         s,
     )
+    s = _unshield_payment_code_value_splits(s)
     return s
 
 

@@ -261,9 +261,39 @@ def _entry_tipo_linha(ent: Mapping[str, Any]) -> str:
     return ""
 
 
+# Valor BR: 1.549,40 | 44,97 | 15.284,86
+_RE_BR_DECIMAL = r"\d{1,3}(?:\.\d{3})*,\d{2}"
+
+# Só valor monetário (subtotal colado do PDF, ex. Dom Felipe)
+_RE_MONEY_ONLY_LINE = re.compile(
+    rf"(?is)^\s*(?:R\s*\$|R\$|\$)?\s*\(?{_RE_BR_DECIMAL}\)?\s*$"
+)
+
+# Só valor + percentual (ex. total de grupo em receitas: 37.379,10 100,00)
+_RE_VALUE_PERCENT_ONLY_LINE = re.compile(
+    rf"(?is)^\s*{_RE_BR_DECIMAL}\s+{_RE_BR_DECIMAL}\s*$"
+)
+
+
+def _is_money_only_line(desc: str) -> bool:
+    """Linha que é apenas um valor em formato BR (subtotal do PDF sem texto)."""
+    t = re.sub(r"[\u00a0\s]+", " ", (desc or "").strip())
+    return bool(t and _RE_MONEY_ONLY_LINE.match(t))
+
+
+def _is_value_percent_only_line(desc: str) -> bool:
+    """Linha só com dois números BR (valor e %); não confundir com 'Taxa ... 20.818,90 55,70'."""
+    t = re.sub(r"[\u00a0\s]+", " ", (desc or "").strip())
+    return bool(t and _RE_VALUE_PERCENT_ONLY_LINE.match(t))
+
+
 def _is_aggregate_line(desc: str) -> bool:
     t = desc.strip()
     if not t:
+        return True
+    if _is_money_only_line(t):
+        return True
+    if _is_value_percent_only_line(t):
         return True
     low = _norm_key(t)
 

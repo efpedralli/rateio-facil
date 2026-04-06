@@ -65,3 +65,37 @@ def test_receita_percentual_sem_rs_inalterada():
     t = tokens[1]
     assert t["valor"] == pytest.approx(20818.90)
     assert t.get("composition_percent") == pytest.approx(55.70)
+
+
+@pytest.mark.parametrize(
+    "line,expected_val",
+    [
+        ("Portão - Ney Braga - ref Pix 492 310,00", 310.00),
+        ("Materiais - Rodrigo Lazzarati - Boleto 37 956,46", 956.46),
+        ("Boleto 6881 351,18", 351.18),
+        ("Débito 867805 42,36", 42.36),
+    ],
+)
+def test_payment_code_not_merged_with_trailing_amount(line: str, expected_val: float):
+    """Código após meio de pagamento não vira milhar do valor (Dom Felipe / linhas Pix-Boleto)."""
+    t = tokenize([pre_normalize_line_for_ocr(line)])[0]
+    assert t["valor"] == pytest.approx(expected_val)
+
+
+def test_ocr_merge_still_applies_after_rs():
+    """Contexto R$: continua repondo dígitos partidos (pre_normalize + _normalize_ocr_broken_money)."""
+    for line, expected in (
+        ("R$ 4 4,00", 44.00),
+        ("R$ 9 0,52", 90.52),
+        ("R$ 6 4.681,71", 64681.71),
+        ("R$ 1 0.828,12", 10828.12),
+    ):
+        t = tokenize([pre_normalize_line_for_ocr(line)])[0]
+        assert t["valor"] == pytest.approx(expected), line
+
+
+def test_playground_style_amount_still_merges_without_payment_hint():
+    """Sem gatilho de pagamento: '2 300,00' continua virando milhar OCR."""
+    line = "Playground área comum 2 300,00"
+    t = tokenize([pre_normalize_line_for_ocr(line)])[0]
+    assert t["valor"] == pytest.approx(2300.00)
