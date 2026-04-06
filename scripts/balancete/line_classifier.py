@@ -6,6 +6,14 @@ from typing import Any, Dict, List
 # Linha de extrato numerado (ex.: "01 - Saldo Anterior 8.302,37")
 _RE_CONTA_NUMERADA = re.compile(r"^\d{1,2}\s*-\s*")
 
+# Totais de seção — evita "total" como substring de "Manutenção", nomes de empresa, etc.
+_TOTAL_LINE_HINT = re.compile(
+    r"(?is)^(total\s*[:\.]|total\s+de\s+receitas|total\s+de\s+despesas|"
+    r"subtotal|total\s+geral|total\s+grupo|total\s*\()"
+)
+# Belle / Sicredi: "... - Total Grupo R$ ..." (total não está no início da linha)
+_TOTAL_LINE_INLINE = re.compile(r"(?is)\b(total\s+grupo|total\s+geral|subtotal)\b")
+
 _STRONG_CONTA_KEYS = (
     "saldo anterior",
     "saldo atual",
@@ -57,7 +65,11 @@ def classify_lines(tokens: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         money_count = int(t.get("money_count") or 0)
         block = str(t.get("block") or "UNKNOWN")
 
-        if "total" in clean:
+        cl = (clean or "").strip()
+        if _TOTAL_LINE_HINT.match(cl):
+            t["type"] = "TOTAL"
+            continue
+        if _TOTAL_LINE_INLINE.search(cl):
             t["type"] = "TOTAL"
             continue
 

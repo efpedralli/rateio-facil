@@ -217,7 +217,7 @@ def _infer_competencia_value(data: Mapping[str, Any]) -> Union[int, str]:
 
 
 def _norm_section(raw: Any) -> str:
-    s = _str(raw).upper()
+    s = _str(raw).upper().strip()
     if s in ("RECEITAS", "RECEITA"):
         return "RECEITAS"
     if s in ("DESPESAS", "DESPESA"):
@@ -269,7 +269,13 @@ def _is_aggregate_line(desc: str) -> bool:
 
     if low in ("receitas", "despesas"):
         return True
-    if re.match(r"^total\b", low):
+    if re.match(r"^total\s*[:\.]", low):
+        return True
+    if re.search(r"\btotal\s+de\s+receitas\b", low):
+        return True
+    if re.search(r"\btotal\s+de\s+despesas\b", low):
+        return True
+    if re.match(r"^total\s*\(", low):
         return True
     if "subtotal" in low:
         return True
@@ -311,8 +317,9 @@ _RE_GROUP_FROM_HEADER = re.compile(
 
 def normalize_group_title(section: str, raw_group: str) -> str:
     """
-    Converte cabeçalho de grupo (ex.: 'Data Fornecedor (+) Receitas Mensais Valor')
-    em título Seens '(+) RECEITAS MENSAIS'.
+    a) Belle / tabular: 'Data Fornecedor (+) Receitas Mensais Valor' → '(+) RECEITAS MENSAIS'.
+    b) Layout simples (Dom Felipe, Dourados): 'Receitas', 'Conservação e Manutenção' →
+       '(+) RECEITAS' / '(-) CONSERVAÇÃO E MANUTENÇÃO' conforme a seção ou o nome do grupo.
     """
     g = raw_group.strip()
     m = _RE_GROUP_FROM_HEADER.match(g)
@@ -320,11 +327,14 @@ def normalize_group_title(section: str, raw_group: str) -> str:
         sig, body = m.group(1), m.group(2).strip()
         body_u = re.sub(r"\s+", " ", body).upper()
         return f"{sig} {body_u}"
-    if section == "RECEITAS":
-        return f"(+) {g.upper()}"
+    collapsed = re.sub(r"\s+", " ", g).strip()
+    gl = _norm_key(collapsed)
+    revenue_name = gl.startswith("receita")
+    if revenue_name or section == "RECEITAS":
+        return f"(+) {collapsed.upper()}"
     if section == "DESPESAS":
-        return f"(-) {g.upper()}"
-    return g.upper()
+        return f"(-) {collapsed.upper()}"
+    return collapsed.upper()
 
 
 _RE_DATE_LEAD = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}\s+")
@@ -404,8 +414,21 @@ def _ordered_groups(
     for ent in entries:
         if not isinstance(ent, Mapping):
             continue
-        sec = _norm_section(ent.get("section") or ent.get("Section") or ent.get("secao"))
-        grp = _str(ent.get("group") or ent.get("Group") or ent.get("grupo")) or "GERAL"
+        sec = _norm_section(
+            ent.get("section")
+            or ent.get("Section")
+            or ent.get("secao")
+            or ent.get("secaoMacro")
+        )
+        grp = (
+            _str(
+                ent.get("group")
+                or ent.get("Group")
+                or ent.get("grupo")
+                or ent.get("grupoOrigem")
+            )
+            or "GERAL"
+        )
         if _should_skip_group(sec, grp):
             continue
         key = (sec, grp)
@@ -624,9 +647,6 @@ _FUND_CONTA_NOME = {
     "CONTA_CORRENTE_FLUXO": "CONTA CORRENTE - FLUXO DE CAIXA DE MANUTENÇÃO",
 }
 
-_RE_DATE_LEAD_LANCAMENTO = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}\s+")
-
-
 def _is_synthetic_resumo_line(desc: str) -> bool:
     low = _norm_key(desc or "")
     if not low:
@@ -659,7 +679,13 @@ def _is_synthetic_resumo_line(desc: str) -> bool:
         return True
     if "total grupo" in low or "total geral" in low or "subtotal" in low:
         return True
-    if low.startswith("total"):
+    if re.search(r"\btotal\s+de\s+receitas\b", low):
+        return True
+    if re.search(r"\btotal\s+de\s+despesas\b", low):
+        return True
+    if re.match(r"^total\s*[:\.]", low):
+        return True
+    if re.match(r"^total\s+\(", low):
         return True
     return False
 
@@ -694,7 +720,7 @@ def _fund_from_resumo_conta_desc(desc: str) -> Optional[str]:
         or "receita de cotas" in low
         or ("receita mensal" in low and "fluxo" in low)
         or "aluguel salao" in low
-        or "aluguel" in low
+        or ("aluguel" in low and "salao" in low)
     ):
         return "CONTA_CORRENTE_FLUXO"
     return None
@@ -717,6 +743,7 @@ def _pivot_accounts_from_resumo_belle(
     rows = raw.get("resumoContas") or []
     if not isinstance(rows, list) or not rows:
         return []
+    resumo_rows_classified = 0
     aggs: Dict[str, Dict[str, float]] = {
         k: {
             "nome": _FUND_CONTA_NOME[k],
@@ -736,6 +763,7 @@ def _pivot_accounts_from_resumo_belle(
         fk = _fund_from_resumo_conta_desc(desc)
         if not fk:
             continue
+        resumo_rows_classified += 1
         a = aggs[fk]
         low = _norm_key(desc)
         v = float(abs(_num(r.get("valor")) or 0.0))
@@ -756,6 +784,9 @@ def _pivot_accounts_from_resumo_belle(
         elif mov in ("ENTRADA", "TOTAL_DISPONIVEL"):
             a["creditos"] += v
 
+    if resumo_rows_classified == 0:
+        return []
+
     for e in raw.get("entries") or []:
         if not isinstance(e, Mapping):
             continue
@@ -774,10 +805,15 @@ def _pivot_accounts_from_resumo_belle(
 
     tr = _num(summary.get("total_receitas"))
     td = _num(summary.get("total_despesas"))
-    if tr is not None and td is not None:
-        obra = aggs["FUNDO_DE_OBRA"]
-        res = aggs["FUNDO_RESERVA_POUPANCA"]
-        flux = aggs["CONTA_CORRENTE_FLUXO"]
+    obra = aggs["FUNDO_DE_OBRA"]
+    res = aggs["FUNDO_RESERVA_POUPANCA"]
+    flux = aggs["CONTA_CORRENTE_FLUXO"]
+    looks_like_multi_fund = (
+        obra["saldo_anterior"] > 0.01
+        or res["saldo_anterior"] > 0.01
+        or (obra["creditos"] > 0.01 and res["creditos"] > 0.01)
+    )
+    if tr is not None and td is not None and looks_like_multi_fund:
         flux["creditos"] = _money_round(float(tr) - obra["creditos"] - res["creditos"])
         flux["debitos"] = _money_round(float(td))
 
@@ -808,8 +844,6 @@ def _canonical_export_from_saida_belle(raw: Dict[str, Any]) -> Dict[str, Any]:
         if sec not in ("RECEITAS", "DESPESAS"):
             continue
         desc = _str(e.get("descricao") or e.get("description"))
-        if not _RE_DATE_LEAD_LANCAMENTO.match(desc.strip()):
-            continue
         grp = e.get("grupoOrigem") or e.get("group") or ""
         if _should_skip_export_group_belle(_str(grp)):
             continue
@@ -856,6 +890,10 @@ def _canonical_export_from_saida_belle(raw: Dict[str, Any]) -> Dict[str, Any]:
         ):
             summary["total_receitas"] = float(val)
         if "despesas" in low and "total" in low and "geral" in low:
+            summary["total_despesas"] = float(val)
+        if re.search(r"\btotal\s+de\s+receitas\b", low):
+            summary["total_receitas"] = float(val)
+        if re.search(r"\btotal\s+de\s+despesas\b", low):
             summary["total_despesas"] = float(val)
         if "total" in low and "receitas" in low and "despesas" in low and "-" in low:
             summary["saldo_mes"] = float(abs(val))

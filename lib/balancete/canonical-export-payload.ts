@@ -80,11 +80,12 @@ function isSyntheticResumoLine(desc: string): boolean {
   if (l.includes("total grupo")) return true;
   if (l.includes("total geral")) return true;
   if (l.includes("subtotal")) return true;
-  if (l.startsWith("total")) return true;
+  if (/\btotal\s+de\s+receitas\b/.test(l)) return true;
+  if (/\btotal\s+de\s+despesas\b/.test(l)) return true;
+  if (/^total\s*[:.]/.test(l)) return true;
+  if (/^total\s+\(/.test(l)) return true;
   return false;
 }
-
-const _RE_DATE_LEAD_ENTRY = /^\d{1,2}\/\d{1,2}\/\d{4}\s+/;
 
 function shouldSkipExportGroup(grupoOrigem: string): boolean {
   const g = normalizeLabel(grupoOrigem || "");
@@ -126,6 +127,12 @@ function extractMonthTotalsFromLancamentos(
       l.includes("total") &&
       l.includes("geral")
     ) {
+      out.total_despesas = v;
+    }
+    if (/\btotal\s+de\s+receitas\b/.test(l) && !l.includes("despes")) {
+      out.total_receitas = v;
+    }
+    if (/\btotal\s+de\s+despesas\b/.test(l)) {
       out.total_despesas = v;
     }
     if (
@@ -285,7 +292,7 @@ function fundKeyFromResumoContaDesc(desc: string): FundContaKey | null {
     l.includes("receita de cotas") ||
     (l.includes("receita mensal") && l.includes("fluxo")) ||
     l.includes("aluguel salao") ||
-    l.includes("aluguel")
+    (l.includes("aluguel") && l.includes("salao"))
   ) {
     return "CONTA_CORRENTE_FLUXO";
   }
@@ -310,16 +317,18 @@ function pivotResumoContasByFund(
   rows: BalanceteResumoConta[],
   summary: Record<string, number>,
   parse: BalanceteParseResult
-): CanonicalExportAccount[] {
+): CanonicalExportAccount[] | null {
   const aggs = new Map<FundContaKey, CanonicalExportAccount>();
   for (const k of Object.keys(FUND_CONTA_NOME) as FundContaKey[]) {
     aggs.set(k, emptyExportAccount(FUND_CONTA_NOME[k]));
   }
 
+  let resumoRowsClassified = 0;
   for (const r of rows) {
     const desc = r.descricao || "";
     const fk = fundKeyFromResumoContaDesc(desc);
     if (!fk) continue;
+    resumoRowsClassified += 1;
     const a = aggs.get(fk)!;
     const l = normalizeLabel(desc);
     const v = Math.abs(r.valor);
@@ -345,6 +354,10 @@ function pivotResumoContasByFund(
     }
   }
 
+  if (resumoRowsClassified === 0) {
+    return null;
+  }
+
   for (const e of parse.entries) {
     if (e.fase !== "RESUMO_MES") continue;
     const l = normalizeLabel(e.descricao || "");
@@ -356,10 +369,15 @@ function pivotResumoContasByFund(
 
   const tr = summary.total_receitas;
   const td = summary.total_despesas;
-  if (tr !== undefined && td !== undefined && rows.length > 0) {
-    const flux = aggs.get("CONTA_CORRENTE_FLUXO")!;
-    const obra = aggs.get("FUNDO_DE_OBRA")!;
-    const res = aggs.get("FUNDO_RESERVA_POUPANCA")!;
+  const obra = aggs.get("FUNDO_DE_OBRA")!;
+  const res = aggs.get("FUNDO_RESERVA_POUPANCA")!;
+  const flux = aggs.get("CONTA_CORRENTE_FLUXO")!;
+  const looksLikeMultiFundContaResumo =
+    rows.length > 0 &&
+    (obra.saldo_anterior > 0.01 ||
+      res.saldo_anterior > 0.01 ||
+      (obra.creditos > 0.01 && res.creditos > 0.01));
+  if (tr !== undefined && td !== undefined && looksLikeMultiFundContaResumo) {
     flux.creditos = roundMoney(tr - obra.creditos - res.creditos);
     flux.debitos = roundMoney(td);
   }
@@ -377,7 +395,14 @@ function buildExportAccounts(
   summary: Record<string, number>
 ): CanonicalExportAccount[] {
   if (parse.resumoContas.length > 0) {
-    return pivotResumoContasByFund(parse.resumoContas, summary, parse);
+    const pivoted = pivotResumoContasByFund(
+      parse.resumoContas,
+      summary,
+      parse
+    );
+    if (pivoted !== null) {
+      return pivoted;
+    }
   }
   return tryAccountsFromCanonical(parse.canonical);
 }
@@ -388,8 +413,6 @@ function buildExportEntries(parse: BalanceteParseResult): CanonicalExportEntry[]
   for (const e of entriesLancamentos(parse.entries)) {
     if (e.tipoLinha !== "ITEM") continue;
     if (e.secaoMacro !== "RECEITAS" && e.secaoMacro !== "DESPESAS") continue;
-    const descTrim = (e.descricao || "").trim();
-    if (!_RE_DATE_LEAD_ENTRY.test(descTrim)) continue;
     if (shouldSkipExportGroup(e.grupoOrigem || "")) continue;
     if (isSyntheticResumoLine(e.descricao || "")) continue;
     out.push({
