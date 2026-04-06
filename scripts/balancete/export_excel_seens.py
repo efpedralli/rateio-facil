@@ -626,10 +626,11 @@ def export_to_excel(data: dict, output_path: str) -> str:
 
     accounts = _accounts_list(data)
     if accounts:
-        write_section_header(
+        _default_accounts_banner = (
             "RESUMO DAS CONTAS - POSIÇÃO CONSOLIDADA DA CONTA PESSOA JURÍDICA - SICREDI"
         )
-        write_section_header(banner)
+        accounts_banner = _str(md.get("seens_accounts_banner") or "").strip() or _default_accounts_banner
+        write_section_header(accounts_banner)
         for acc in accounts:
             if not isinstance(acc, Mapping):
                 continue

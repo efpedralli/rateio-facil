@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import fs from "fs/promises";
 import path from "path";
-import { authOptions } from "@/lib/auth";
+import { createAuthOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import type { CanonicalBalanceteExportPayload } from "@/lib/balancete/canonical-export-payload";
 import { isPathUnderBalanceteJobDir } from "@/lib/balancete/balancete-job-paths";
@@ -28,7 +28,7 @@ function isPayloadShape(x: unknown): x is CanonicalBalanceteExportPayload {
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const session = await getServerSession(authOptions);
+  const session = await getServerSession(createAuthOptions(prisma));
   if (!session?.user?.id) {
     return NextResponse.json({ ok: false, error: "Não autenticado." }, { status: 401 });
   }
