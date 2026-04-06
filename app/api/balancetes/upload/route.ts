@@ -99,6 +99,7 @@ export async function POST(req: NextRequest) {
         issues: result.issues,
         validationSummary: result.validationSummary,
         downloadUrl: null,
+        exportPayload: result.exportPayload,
         error: errMsg,
       });
     }
@@ -131,6 +132,7 @@ export async function POST(req: NextRequest) {
       validationSummary: result.validationSummary,
       downloadUrl: `/api/balancetes/${encodeURIComponent(jobId)}/download`,
       seensDownloadUrl,
+      exportPayload: result.exportPayload,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Erro ao processar balancete.";

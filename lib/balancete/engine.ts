@@ -11,7 +11,10 @@ import type {
   BalanceteParseResult,
   BalanceteValidationIssue,
 } from "./types";
-import { buildCanonicalExportPayload } from "./canonical-export-payload";
+import {
+  buildCanonicalExportPayload,
+  type CanonicalBalanceteExportPayload,
+} from "./canonical-export-payload";
 import { mapParsedBalanceteToImportDocument } from "./import-mapper";
 import { normalizeParseResult } from "./normalizers";
 import { entriesLancamentos, buildBalanceteValidationSummary, validateBalancete } from "./validators";
@@ -28,6 +31,8 @@ export type ProcessBalanceteResult = {
   validationSummary: BalanceteValidationSummary;
   xlsxRelativePath: string;
   blocking: boolean;
+  /** JSON canônico consumido por `export_excel_seens.py` / `export_xlsx.py`, quando o processamento chegou a montar o payload. */
+  exportPayload: CanonicalBalanceteExportPayload | null;
 };
 
 function countGroups(entries: BalanceteParseResult["entries"]): number {
@@ -120,10 +125,12 @@ export async function processBalanceteJob(params: {
   let exportStats: BalanceteExportStats | null = null;
   let fileError = false;
   let seensXlsxRelativePath: string | undefined;
+  let exportPayload: CanonicalBalanceteExportPayload | null = null;
 
   if (!validation.blocking) {
     try {
       const payload = buildCanonicalExportPayload(parse);
+      exportPayload = payload;
       const jsonPath = path.join(outDir, "canonical_export.json");
       await fs.writeFile(jsonPath, JSON.stringify(payload), "utf-8");
       const tX = Date.now();
@@ -193,5 +200,6 @@ export async function processBalanceteJob(params: {
     validationSummary,
     xlsxRelativePath: blocking ? "" : xlsxRelativePath,
     blocking,
+    exportPayload,
   };
 }

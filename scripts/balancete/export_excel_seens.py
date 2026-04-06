@@ -629,6 +629,7 @@ def export_to_excel(data: dict, output_path: str) -> str:
         write_section_header(
             "RESUMO DAS CONTAS - POSIÇÃO CONSOLIDADA DA CONTA PESSOA JURÍDICA - SICREDI"
         )
+        write_section_header(banner)
         for acc in accounts:
             if not isinstance(acc, Mapping):
                 continue
