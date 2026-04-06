@@ -29,6 +29,11 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 
   const summary = job.summary as BalanceteJobSummary | null;
 
+  const seensDownloadUrl =
+    job.status === "COMPLETED" && summary?.seensXlsxRelativePath
+      ? `/api/balancetes/${encodeURIComponent(job.id)}/download-seens`
+      : null;
+
   return NextResponse.json({
     ok: true,
     id: job.id,
@@ -38,6 +43,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     validationSummary: summary?.validationSummary ?? null,
     errorMessage: job.errorMessage,
     downloadUrl,
+    seensDownloadUrl,
     originalName: job.originalName,
     createdAt: job.createdAt.toISOString(),
     updatedAt: job.updatedAt.toISOString(),

@@ -15,14 +15,20 @@ def _guess_movimento_conta(desc: str) -> str:
     d = (desc or "").lower()
     if "total dispon" in d:
         return "TOTAL_DISPONIVEL"
+    if "acumulado" in d and (
+        "anterior" in d or "competência" in d or "competencia" in d
+    ):
+        return "SALDO_ANTERIOR"
     if "saldo anterior" in d or "sld ant" in d:
         return "SALDO_ANTERIOR"
+    if "saldo atual" in d or "sld atual" in d:
+        return "SALDO_ATUAL"
+    if "resgate" in d and "poupan" in d:
+        return "SAIDA"
     if "entrada" in d and "total" not in d[:28]:
         return "ENTRADA"
     if "saída" in d or "saida" in d:
         return "SAIDA"
-    if "saldo atual" in d or "sld atual" in d:
-        return "SALDO_ATUAL"
     return "ENTRADA"
 
 
@@ -87,7 +93,12 @@ def _build_canonical(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def rows_to_parse_json(rows: List[LinhaNormalizada], file_name: str) -> Dict[str, Any]:
+def rows_to_parse_json(
+    rows: List[LinhaNormalizada],
+    file_name: str,
+    *,
+    parser_layout_id: str = "leitor_balancete_v1",
+) -> Dict[str, Any]:
     entries: List[Dict[str, Any]] = []
     resumo_contas: List[Dict[str, Any]] = []
     issues: List[Dict[str, Any]] = []
@@ -222,7 +233,7 @@ def rows_to_parse_json(rows: List[LinhaNormalizada], file_name: str) -> Dict[str
         "fileName": file_name,
         "competenceLabel": periodo or None,
         "condominiumName": condominio or None,
-        "parserLayoutId": "leitor_balancete_v1",
+        "parserLayoutId": parser_layout_id,
         "blocksDetected": [b for b in blocks_detected if b],
     }
 

@@ -1,6 +1,6 @@
 /**
  * Constrói o documento lógico de importação a partir do parse canônico (para resumo na API / UI).
- * O arquivo físico XLSX é gerado por `import-xlsx-exporter.ts`, alinhado ao mesmo conteúdo.
+ * O XLSX final é gerado por `scripts/balancete/export_xlsx.py` a partir do payload canônico.
  */
 
 import type { BalanceteImportDocument, BalanceteImportRow } from "./import-types";
