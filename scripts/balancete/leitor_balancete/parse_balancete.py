@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from .extract_pdf import extract_full_text
 from .metadata import (
@@ -303,7 +303,12 @@ def parse_ernest_tabular(
             elif not condominio and len(line) < 100 and "demonstrativo" not in low:
                 condominio = line.strip()
 
-        if "receitas/histórico" in low or "receitas/historico" in low:
+        if (
+            "receitas/histórico" in low
+            or "receitas/historico" in low
+            or "receitas / histórico" in low
+            or "receitas / historico" in low
+        ):
             phase = "receitas"
             bloco = "RECEITAS"
             _append(
@@ -319,7 +324,12 @@ def parse_ernest_tabular(
             )
             continue
 
-        if "despesas/histórico" in low or "despesas/historico" in low:
+        if (
+            "despesas/histórico" in low
+            or "despesas/historico" in low
+            or "despesas / histórico" in low
+            or "despesas / historico" in low
+        ):
             phase = "despesas"
             bloco = "DESPESAS"
             _append(
@@ -451,14 +461,141 @@ def parse_ernest_tabular(
     return rows
 
 
-def detect_profile(text: str) -> str:
+def _is_orcamento_previsao(text: str) -> bool:
+    """Previsão / composição de orçamento (Concept e similares), não balancete demonstrativo."""
     t = text.lower()
+    if "rateados na taxa" in t:
+        return True
+    if "previsão" in t and "orçamento" in t:
+        return True
+    if "previsao" in t and "orcamento" in t:
+        return True
+    if "composição" in t and "orçamento" in t:
+        return True
+    if "composicao" in t and "orcamento" in t:
+        return True
+    if "oramento mensal" in t:  # encoding quebrado de 'orçamento'
+        return True
+    return False
+
+
+def parse_orcamento_previsao(
+    lines: List[str],
+    arquivo: str,
+    condominio: str,
+    periodo: str,
+) -> List[LinhaNormalizada]:
+    """
+    Layout 'Previsão/Composição de Orçamento Mensal': blocos com percentual (Taxas - 39%),
+    linhas com valor ao fim; totais 'Total:'.
+    Saída no mesmo modelo LinhaNormalizada (bloco DESPESAS como composição de gastos previstos).
+    """
+    rows: List[LinhaNormalizada] = []
+    bloco = "DESPESAS"
+    categoria = ""
+    seen_tabela = False
+
+    for line in lines:
+        low = line.lower().strip()
+        if "condomínio" in low or "condominio" in low:
+            ex = extract_condominio(line)
+            if ex:
+                condominio = ex
+
+        if "valores rateados" in low or "classe da conta" in low:
+            seen_tabela = True
+            _append(
+                rows,
+                arquivo=arquivo,
+                condominio=condominio,
+                periodo=periodo,
+                bloco=bloco,
+                categoria="",
+                descricao=line.strip(),
+                valor=None,
+                tipo_linha="secao",
+            )
+            continue
+
+        # Cabeçalho de grupo: "Taxas Mensais - 39%" ou "Manutenção e Conservação - 41%"
+        if re.search(r"\s-\s*\d{1,3}\s*%", line) and len(line) < 140:
+            categoria = line.strip()
+            _append(
+                rows,
+                arquivo=arquivo,
+                condominio=condominio,
+                periodo=periodo,
+                bloco=bloco,
+                categoria=categoria,
+                descricao="",
+                valor=None,
+                tipo_linha="categoria",
+            )
+            continue
+
+        lm = last_money_on_line(line)
+        if lm:
+            val, before = lm
+            desc = before.strip()
+            if _is_pure_amount_label(desc):
+                continue
+            ld = desc.lower()
+            tipo = "item"
+            if ld.startswith("total") or low.startswith("total:"):
+                tipo = "total"
+            _append(
+                rows,
+                arquivo=arquivo,
+                condominio=condominio,
+                periodo=periodo,
+                bloco=bloco,
+                categoria=categoria,
+                descricao=desc or line.strip(),
+                valor=val,
+                tipo_linha=tipo,
+            )
+            continue
+
+        if seen_tabela and len(line.strip()) < 200:
+            if "emitido em" in low or "página" in low and "/" in line:
+                continue
+            _append(
+                rows,
+                arquivo=arquivo,
+                condominio=condominio,
+                periodo=periodo,
+                bloco=bloco,
+                categoria=categoria,
+                descricao=line.strip(),
+                valor=None,
+                tipo_linha="texto",
+            )
+
+    return rows
+
+
+def detect_profile(text: str) -> str:
+    """
+    Ordem importa: administradoras Confiance usam o mesmo texto 'Receitas / Histórico'
+    que o layout Ernest; por isso 'confiance' no PDF deve vir antes de receitas/histórico.
+    """
+    t = text.lower()
+    if _is_orcamento_previsao(text):
+        return "orcamento_previsao"
     if "ernest gardemann" in t or "mês ref." in t or "mes ref." in t:
         return "ernest"
-    if "confiance" in t or ("demonstrativo de receitas e despesas" in t and "parcela" not in t):
+    # Confiance no cabeçalho/rodapé (ex.: BAL 012026 resumido.pdf)
+    if "confiance" in t:
         return "confiance"
+    # G.K.B. e similares: sem Confiance, mas com colunas Ref/Baixa (Receitas / Histórico com espaços)
+    if "g.k.b." in t or "gkbsindico" in t or "gkb sindicos" in t:
+        return "ernest"
     if "receitas/histórico" in t or "receitas/historico" in t:
         return "ernest"
+    if "receitas / histórico" in t or "receitas / historico" in t:
+        return "ernest"
+    if "demonstrativo de receitas e despesas" in t and "parcela" not in t:
+        return "confiance"
     return "confiance"
 
 
@@ -470,7 +607,9 @@ def parse_pdf(path: Path) -> List[LinhaNormalizada]:
     lines = _clean_lines(text)
 
     profile = detect_profile(text)
-    if profile == "ernest":
+    if profile == "orcamento_previsao":
+        rows = parse_orcamento_previsao(lines, arquivo, condominio, periodo)
+    elif profile == "ernest":
         rows = parse_ernest_tabular(lines, arquivo, condominio, periodo)
     else:
         rows = parse_confiance_layout(lines, arquivo, condominio, periodo)

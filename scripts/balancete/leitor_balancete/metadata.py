@@ -37,6 +37,13 @@ def extract_condominio(line: str) -> Optional[str]:
     return None
 
 
+RE_REF_COMPETENCIA = re.compile(r"Ref\s*:\s*(\d{2})/(\d{4})", re.IGNORECASE)
+RE_MES_NOME_ANO = re.compile(
+    r"(Janeiro|Fevereiro|Março|Marco|Abril|Maio|Junho|Julho|Agosto|Setembro|Outubro|Novembro|Dezembro)\s*[-–]\s*(\d{4})",
+    re.IGNORECASE,
+)
+
+
 def extract_periodo(text: str) -> str:
     for line in text.splitlines():
         s = line.strip()
@@ -49,6 +56,16 @@ def extract_periodo(text: str) -> str:
         m = RE_BALANCETE_DEMO.search(s)
         if m:
             return f"{m.group(1)} a {m.group(2)}"
+    # Ref: MM/AAAA (GKBSindico, Ernest, etc.)
+    m = RE_REF_COMPETENCIA.search(text)
+    if m:
+        mm, yyyy = m.group(1), m.group(2)
+        return f"01/{mm}/{yyyy} a 28/{mm}/{yyyy}"
+    # "Fevereiro - 2026" (orçamento / previsão)
+    m = RE_MES_NOME_ANO.search(text)
+    if m:
+        # Mantém legível; mês por extenso já está na linha
+        return f"Competência {m.group(2)} ({m.group(1)})"
     return ""
 
 
