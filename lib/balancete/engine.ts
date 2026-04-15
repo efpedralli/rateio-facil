@@ -1,17 +1,13 @@
 /**
- * Orquestração: parser Python → normalização → validação → documento de importação → XLSX final (modelo Belle).
+ * Orquestração: parser Python → normalização → validação → documento de importação → XLSX final padronizado.
  */
 
 import path from "path";
 import type { BalanceteImportDocument, BalanceteValidationSummary } from "./import-types";
 import type { BalanceteJobSummary, BalanceteParseResult, BalanceteValidationIssue } from "./types";
-import {
-  exportBelleChateauImportXlsx,
-  resolveBelleTemplateXlsPath,
-  type BelleExportStats,
-} from "./import-xlsx-exporter";
 import { mapParsedBalanceteToImportDocument } from "./import-mapper";
 import { normalizeParseResult } from "./normalizers";
+import { exportSemanticBalanceteXlsx, type SemanticExportStats } from "./semantic-export-xlsx";
 import { entriesLancamentos, buildBalanceteValidationSummary, validateBalancete } from "./validators";
 import { runBalanceteParser } from "./python-runner";
 
@@ -40,7 +36,7 @@ function countGroups(entries: BalanceteParseResult["entries"]): number {
 function buildSummary(
   parse: BalanceteParseResult,
   issues: BalanceteValidationIssue[],
-  exportStats: BelleExportStats | null,
+  exportStats: SemanticExportStats | null,
   validationSummary: BalanceteValidationSummary
 ): BalanceteJobSummary {
   const lan = entriesLancamentos(parse.entries);
@@ -67,9 +63,8 @@ function buildSummary(
     parserLayoutId: parse.metadata.parserLayoutId,
     importFill: exportStats
       ? {
-          filledCells: exportStats.filledCells,
-          unmatchedPoolLines: exportStats.unmatchedPoolLines,
-          unusedTemplateSlots: exportStats.unusedTemplateSlots,
+          dataRowsWritten: exportStats.dataRowsWritten,
+          sectionCount: exportStats.sectionCount,
         }
       : undefined,
     validationSummary,
@@ -77,7 +72,7 @@ function buildSummary(
 }
 
 /**
- * Processa PDF e grava XLSX final no layout do modelo `models/*Belle*modelo*.xls`.
+ * Processa PDF e grava XLSX final no layout padronizado do balancete.
  */
 export async function processBalanceteJob(params: {
   jobId: string;
@@ -112,48 +107,23 @@ export async function processBalanceteJob(params: {
   const xlsxRelativePath = path.join("uploads", "balancetes", jobId, "saida.xlsx").replace(/\\/g, "/");
 
   const issues = [...validation.issues];
-  let exportStats: BelleExportStats | null = null;
-  let fileError = false;
+  let exportStats: SemanticExportStats | null = null;
 
   if (!validation.blocking) {
-    const tpl = resolveBelleTemplateXlsPath();
-    if (!tpl) {
-      console.warn(`${LOG} job=${jobId} | export | modelo .xls não encontrado em models/`);
-      issues.push({
-        type: "ERROR",
-        code: "NO_IMPORT_TEMPLATE",
-        message:
-          "Modelo de importação não encontrado. Coloque o arquivo .xls do balancete em `models/` (ex.: BELLE CHATEAU 2 - modelo importação.xls).",
-      });
-      fileError = true;
-    } else {
-      const tX = Date.now();
-      console.log(`${LOG} job=${jobId} | export XLSX | template=${tpl} → ${xlsxAbs}`);
-      exportStats = exportBelleChateauImportXlsx(tpl, xlsxAbs, parse);
-      console.log(
-        `${LOG} job=${jobId} | export concluído em ${Date.now() - tX}ms | filled=${exportStats.filledCells} unmatchedPool=${exportStats.unmatchedPoolLines} unusedSlots=${exportStats.unusedTemplateSlots}`
-      );
-      if (exportStats.unmatchedPoolLines > 0 || exportStats.unusedTemplateSlots > 0) {
-        issues.push({
-          type: "WARNING",
-          code: "IMPORT_FILL_PARTIAL",
-          message: `Preenchimento do modelo: ${exportStats.unmatchedPoolLines} linha(s) extraída(s) sem célula correspondente; ${exportStats.unusedTemplateSlots} linha(s) do modelo sem valor.`,
-          details: {
-            filledCells: exportStats.filledCells,
-            unmatchedPoolLines: exportStats.unmatchedPoolLines,
-            unusedTemplateSlots: exportStats.unusedTemplateSlots,
-          },
-        });
-      }
-    }
+    const tX = Date.now();
+    console.log(`${LOG} job=${jobId} | export XLSX padronizado → ${xlsxAbs}`);
+    exportStats = await exportSemanticBalanceteXlsx(parse, xlsxAbs);
+    console.log(
+      `${LOG} job=${jobId} | export concluído em ${Date.now() - tX}ms | rows=${exportStats.dataRowsWritten} sections=${exportStats.sectionCount}`
+    );
   } else {
     console.warn(`${LOG} job=${jobId} | export ignorado (validação bloqueante)`);
   }
 
-  const validationSummary = buildBalanceteValidationSummary(issues, exportStats ?? undefined);
+  const validationSummary = buildBalanceteValidationSummary(issues);
   const summary = buildSummary(parse, issues, exportStats, validationSummary);
 
-  const blocking = validation.blocking || fileError;
+  const blocking = validation.blocking;
 
   console.log(
     `${LOG} job=${jobId} | fim | blocking=${blocking} | ${Date.now() - tJob}ms total | erros=${summary.errorCount} avisos=${summary.warningCount}`

@@ -73,14 +73,14 @@ function coerceEntry(raw: unknown): BalanceteEntry | null {
 
   const entry: BalanceteEntry = {
     secaoMacro: secaoMacro as BalanceteEntry["secaoMacro"],
-    grupoOrigem: String(o.grupoOrigem ?? "GERAL"),
-    data: o.data == null ? null : String(o.data),
-    fornecedor: o.fornecedor == null ? null : String(o.fornecedor),
+    grupoOrigem: repairMojibakeText(String(o.grupoOrigem ?? "GERAL")),
+    data: o.data == null ? null : repairMojibakeText(String(o.data)),
+    fornecedor: o.fornecedor == null ? null : repairMojibakeText(String(o.fornecedor)),
     descricao: repairMojibakeText(String(o.descricao ?? "")),
     valor: Math.abs(valor),
     sinal,
     tipoLinha: tipoLinha as BalanceteEntry["tipoLinha"],
-    linhaOriginal: o.linhaOriginal == null ? null : String(o.linhaOriginal),
+    linhaOriginal: o.linhaOriginal == null ? null : repairMojibakeText(String(o.linhaOriginal)),
   };
   if (fase) entry.fase = fase;
   return entry;
@@ -96,11 +96,11 @@ function coerceResumo(raw: unknown): BalanceteResumoConta | null {
   const valor = Number(o.valor);
   if (!Number.isFinite(valor)) return null;
   return {
-    conta: String(o.conta ?? ""),
+    conta: repairMojibakeText(String(o.conta ?? "")),
     movimento: movimento as BalanceteResumoConta["movimento"],
     descricao: repairMojibakeText(String(o.descricao ?? "")),
     valor,
-    linhaOriginal: o.linhaOriginal == null ? null : String(o.linhaOriginal),
+    linhaOriginal: o.linhaOriginal == null ? null : repairMojibakeText(String(o.linhaOriginal)),
   };
 }
 
@@ -189,13 +189,18 @@ export function normalizeParseResult(raw: unknown, fileName: string): BalanceteP
     resumoContas,
     issues,
     metadata: {
-      fileName: String(meta.fileName ?? fileName),
-      competenceLabel: meta.competenceLabel == null ? null : String(meta.competenceLabel),
-      competenceStart: meta.competenceStart == null ? null : String(meta.competenceStart),
-      competenceEnd: meta.competenceEnd == null ? null : String(meta.competenceEnd),
-      condominiumName: meta.condominiumName == null ? null : String(meta.condominiumName),
-      parserLayoutId: meta.parserLayoutId == null ? null : String(meta.parserLayoutId),
-      blocksDetected,
+      fileName: repairMojibakeText(String(meta.fileName ?? fileName)),
+      competenceLabel:
+        meta.competenceLabel == null ? null : repairMojibakeText(String(meta.competenceLabel)),
+      competenceStart:
+        meta.competenceStart == null ? null : repairMojibakeText(String(meta.competenceStart)),
+      competenceEnd:
+        meta.competenceEnd == null ? null : repairMojibakeText(String(meta.competenceEnd)),
+      condominiumName:
+        meta.condominiumName == null ? null : repairMojibakeText(String(meta.condominiumName)),
+      parserLayoutId:
+        meta.parserLayoutId == null ? null : repairMojibakeText(String(meta.parserLayoutId)),
+      blocksDetected: blocksDetected?.map((x) => repairMojibakeText(x)),
     },
     schemaVersion,
     canonical,

@@ -115,12 +115,13 @@ export function validateResumoMes(entries: BalanceteEntry[]): BalanceteValidatio
   }
 
   if (resultado != null && receitas != null && despesas != null) {
-    if (!nearlyEqual(receitas - despesas, resultado)) {
+    const despesasAbs = Math.abs(despesas);
+    if (!nearlyEqual(receitas - despesasAbs, resultado)) {
       issues.push({
         type: "WARNING",
         code: "RESUMO_MES_RESULTADO",
-        message: `Resumo do mês: receitas (${receitas.toFixed(2)}) menos despesas (${despesas.toFixed(2)}) difere do total informado (${resultado.toFixed(2)}).`,
-        details: { receitas, despesas, resultado },
+        message: `Resumo do mês: receitas (${receitas.toFixed(2)}) menos despesas (${despesasAbs.toFixed(2)}) difere do total informado (${resultado.toFixed(2)}).`,
+        details: { receitas, despesas, despesasAbs, resultado },
       });
     }
   }
@@ -219,7 +220,6 @@ export function validateBalancete(parse: BalanceteParseResult): BalanceteValidat
   }
 
   const merged = [...parse.issues, ...extra];
-  const errorCount = merged.filter((i) => i.type === "ERROR").length;
   const blocking = merged.some((i) => i.type === "ERROR" && i.code === "NO_DATA_EXTRACTED");
 
   return {

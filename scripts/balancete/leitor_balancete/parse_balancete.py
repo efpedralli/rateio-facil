@@ -118,6 +118,67 @@ def _looks_like_section_header(line: str, has_money: bool) -> bool:
     return False
 
 
+def _looks_like_group_label_candidate(line: str) -> bool:
+    s = (line or "").strip()
+    if len(s) < 3 or len(s) > 80:
+        return False
+    if any(ch.isdigit() for ch in s):
+        return False
+    if s.lower().startswith(("r$", "página ", "pagina ", "relatório", "relatorio")):
+        return False
+    if re.search(r"[()]", s):
+        return False
+    words = [w for w in re.split(r"\s+", s) if w]
+    if not words or len(words) > 6:
+        return False
+    allowed = re.fullmatch(r"[A-Za-zÀ-ÿ0-9/&.,\- ]+", s)
+    if not allowed:
+        return False
+    if len(words) == 1:
+        return words[0][0].isupper()
+    capitals = sum(1 for w in words if w[:1].isupper())
+    return capitals >= max(2, len(words) - 1)
+
+
+def _is_account_table_header(line: str) -> bool:
+    low = (line or "").lower()
+    if "saldo anterior" not in low:
+        return False
+    if "saldo final" not in low:
+        return False
+    return "créditos" in low or "creditos" in low or "débitos" in low or "debitos" in low
+
+
+def _looks_like_account_name(line: str) -> bool:
+    s = (line or "").strip()
+    if len(s) < 3 or len(s) > 120:
+        return False
+    if _is_account_table_header(s):
+        return False
+    if re.match(r"^0\d\s*[-–]\s*", s):
+        return False
+    if re.match(r"^\d+\s*[-–]\s*", s):
+        return True
+    if any(
+        x in s.lower()
+        for x in ("conta movimento", "fundo ", "poupança", "poupanca", "investimento")
+    ):
+        return True
+    words = s.split()
+    return s.isupper() and 1 <= len(words) <= 4
+
+
+def _should_skip_text_line(line: str) -> bool:
+    low = (line or "").lower().strip()
+    if not low:
+        return True
+    if low.startswith("página ") or low.startswith("pagina "):
+        return True
+    if low.startswith("relatório emitido") or low.startswith("relatorio emitido"):
+        return True
+    return False
+
+
 def parse_confiance_layout(
     lines: List[str],
     arquivo: str,
@@ -128,6 +189,7 @@ def parse_confiance_layout(
     bloco = "GERAL"
     categoria = ""
     phase = "geral"
+    expect_new_group = False
 
     for line in lines:
         low = line.lower()
@@ -143,6 +205,7 @@ def parse_confiance_layout(
         if line.strip().startswith("Receitas /") or "receitas / histórico" in low:
             phase = "receitas"
             bloco = "RECEITAS"
+            expect_new_group = True
             _append(
                 rows,
                 arquivo=arquivo,
@@ -158,6 +221,7 @@ def parse_confiance_layout(
         if line.strip().startswith("Despesas /") or "despesas / histórico" in low:
             phase = "despesas"
             bloco = "DESPESAS"
+            expect_new_group = True
             _append(
                 rows,
                 arquivo=arquivo,
@@ -176,6 +240,7 @@ def parse_confiance_layout(
             phase = "resumo"
             bloco = "RESUMO"
             categoria = ""
+            expect_new_group = False
             _append(
                 rows,
                 arquivo=arquivo,
@@ -188,10 +253,11 @@ def parse_confiance_layout(
                 tipo_linha="secao",
             )
             continue
-        if "contas correntes" in low and "saldo" not in low:
+        if "contas correntes" in low:
             phase = "contas"
             bloco = "CONTAS_CORRENTES"
             categoria = ""
+            expect_new_group = False
             _append(
                 rows,
                 arquivo=arquivo,
@@ -204,10 +270,11 @@ def parse_confiance_layout(
                 tipo_linha="secao",
             )
             continue
-        if "contas poupan" in low or "poupança/aplicação" in low:
+        if "contas poupan" in low or "poupança/aplicação" in low or "poupanca/aplicacao" in low:
             phase = "poupanca"
             bloco = "CONTAS_POUPANCA"
             categoria = ""
+            expect_new_group = False
             _append(
                 rows,
                 arquivo=arquivo,
@@ -224,8 +291,50 @@ def parse_confiance_layout(
         lm = last_money_on_line(line)
         is_header = _looks_like_section_header(line, bool(lm))
 
+        if phase in ("contas", "poupanca") and _is_account_table_header(line):
+            expect_new_group = False
+            continue
+
+        if phase in ("contas", "poupanca") and not lm and _looks_like_account_name(line):
+            categoria = line.strip()
+            expect_new_group = False
+            _append(
+                rows,
+                arquivo=arquivo,
+                condominio=condominio,
+                periodo=periodo,
+                bloco=bloco,
+                categoria=categoria,
+                descricao="",
+                valor=None,
+                tipo_linha="categoria",
+            )
+            continue
+
+        if (
+            phase in ("receitas", "despesas")
+            and not lm
+            and _looks_like_group_label_candidate(line)
+            and (expect_new_group or not categoria)
+        ):
+            categoria = line.strip()
+            expect_new_group = False
+            _append(
+                rows,
+                arquivo=arquivo,
+                condominio=condominio,
+                periodo=periodo,
+                bloco=bloco,
+                categoria=categoria,
+                descricao="",
+                valor=None,
+                tipo_linha="categoria",
+            )
+            continue
+
         if is_header and not lm:
             categoria = line.strip()
+            expect_new_group = False
             _append(
                 rows,
                 arquivo=arquivo,
@@ -243,6 +352,20 @@ def parse_confiance_layout(
             val, before = lm
             desc = before.strip()
             if _is_pure_amount_label(desc):
+                if phase in ("contas", "poupanca"):
+                    _append(
+                        rows,
+                        arquivo=arquivo,
+                        condominio=condominio,
+                        periodo=periodo,
+                        bloco=bloco,
+                        categoria=categoria,
+                        descricao="Saldo Final",
+                        valor=val,
+                        tipo_linha="resumo",
+                    )
+                elif phase in ("receitas", "despesas"):
+                    expect_new_group = True
                 continue
             low_before = desc.lower()
             tipo = "item"
@@ -263,10 +386,14 @@ def parse_confiance_layout(
                 valor=val,
                 tipo_linha=tipo,
             )
+            expect_new_group = tipo == "total"
             continue
 
         # Linha descritiva sem valor (subtítulo)
         if len(line) < 160:
+            if _should_skip_text_line(line):
+                continue
+            expect_new_group = False
             _append(
                 rows,
                 arquivo=arquivo,
@@ -293,6 +420,7 @@ def parse_ernest_tabular(
     bloco = "GERAL"
     categoria = ""
     phase = "cabecalho"
+    expect_new_group = False
 
     for line in lines:
         low = line.lower()
@@ -311,6 +439,7 @@ def parse_ernest_tabular(
         ):
             phase = "receitas"
             bloco = "RECEITAS"
+            expect_new_group = True
             _append(
                 rows,
                 arquivo=arquivo,
@@ -332,6 +461,7 @@ def parse_ernest_tabular(
         ):
             phase = "despesas"
             bloco = "DESPESAS"
+            expect_new_group = True
             _append(
                 rows,
                 arquivo=arquivo,
@@ -351,6 +481,7 @@ def parse_ernest_tabular(
             phase = "resumo"
             bloco = "RESUMO"
             categoria = ""
+            expect_new_group = False
             _append(
                 rows,
                 arquivo=arquivo,
@@ -364,10 +495,31 @@ def parse_ernest_tabular(
             )
             continue
 
-        if "contas correntes" in low and "valores" in low:
+        if "contas correntes" in low and (
+            "valores" in low or "saldo anterior" in low or "créditos" in low or "creditos" in low
+        ):
             phase = "contas"
             bloco = "CONTAS_CORRENTES"
             categoria = ""
+            expect_new_group = False
+            _append(
+                rows,
+                arquivo=arquivo,
+                condominio=condominio,
+                periodo=periodo,
+                bloco=bloco,
+                categoria="",
+                descricao=line.strip(),
+                valor=None,
+                tipo_linha="secao",
+            )
+            continue
+
+        if "contas poupan" in low or "poupança/aplicação" in low or "poupanca/aplicacao" in low:
+            phase = "poupanca"
+            bloco = "CONTAS_POUPANCA"
+            categoria = ""
+            expect_new_group = False
             _append(
                 rows,
                 arquivo=arquivo,
@@ -391,6 +543,43 @@ def parse_ernest_tabular(
         # Categoria sem valor: linha curta, title case ou caps
         if not lm:
             stripped = line.strip()
+            if phase in ("contas", "poupanca"):
+                if _is_account_table_header(stripped) or _should_skip_text_line(stripped):
+                    continue
+                if _looks_like_account_name(stripped):
+                    categoria = stripped
+                    expect_new_group = False
+                    _append(
+                        rows,
+                        arquivo=arquivo,
+                        condominio=condominio,
+                        periodo=periodo,
+                        bloco=bloco,
+                        categoria=categoria,
+                        descricao="",
+                        valor=None,
+                        tipo_linha="categoria",
+                    )
+                    continue
+            if (
+                phase in ("receitas", "despesas")
+                and _looks_like_group_label_candidate(stripped)
+                and (expect_new_group or not categoria)
+            ):
+                categoria = stripped
+                expect_new_group = False
+                _append(
+                    rows,
+                    arquivo=arquivo,
+                    condominio=condominio,
+                    periodo=periodo,
+                    bloco=bloco,
+                    categoria=categoria,
+                    descricao="",
+                    valor=None,
+                    tipo_linha="categoria",
+                )
+                continue
             if len(stripped) < 120 and len(stripped) > 2:
                 # Ignora linhas de continuação muito longas sem valor (multiline item)
                 if phase == "despesas" and not stripped[0].isdigit():
@@ -412,6 +601,7 @@ def parse_ernest_tabular(
                         )
                     ):
                         categoria = stripped
+                        expect_new_group = False
                         _append(
                             rows,
                             arquivo=arquivo,
@@ -433,6 +623,20 @@ def parse_ernest_tabular(
             val, before = lm
             desc = before.strip()
             if _is_pure_amount_label(desc):
+                if phase in ("contas", "poupanca"):
+                    _append(
+                        rows,
+                        arquivo=arquivo,
+                        condominio=condominio,
+                        periodo=periodo,
+                        bloco=bloco,
+                        categoria=categoria,
+                        descricao="Saldo Final",
+                        valor=val,
+                        tipo_linha="resumo",
+                    )
+                elif phase in ("receitas", "despesas"):
+                    expect_new_group = True
                 continue
             tipo = "item"
             ld = desc.lower()
@@ -456,6 +660,7 @@ def parse_ernest_tabular(
                 valor=val,
                 tipo_linha=tipo,
             )
+            expect_new_group = tipo == "total"
             continue
 
     return rows

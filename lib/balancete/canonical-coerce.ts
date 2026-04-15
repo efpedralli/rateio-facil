@@ -11,6 +11,7 @@ import type {
   ParsedResumoItem,
   ParsedTotalGeral,
 } from "./canonical-types";
+import { repairMojibakeText } from "./text-repair";
 
 function num(v: unknown): number | null {
   const n = typeof v === "number" ? v : Number(v);
@@ -18,7 +19,7 @@ function num(v: unknown): number | null {
 }
 
 function str(v: unknown): string {
-  return v == null ? "" : String(v);
+  return v == null ? "" : repairMojibakeText(String(v));
 }
 
 function coerceLancamento(raw: unknown): ParsedLancamento | null {

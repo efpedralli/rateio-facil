@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 
 # Valores monetários em formato brasileiro dentro do texto
 RE_BRL_TOKEN = re.compile(
-    r"(?:\(?R\$\s*)?([\-\d]{1,3}(?:\.\d{3})*,\d{2})\)?"
+    r"\(?\s*(?:R\$\s*)?[\-\d]{1,3}(?:\.\d{3})*,\d{2}\)?"
 )
 
 
