@@ -8,7 +8,7 @@ import { spawn } from "child_process";
 function resolvePythonBinary(): string {
   return process.platform === "win32"
     ? path.join(process.cwd(), ".venv", "Scripts", "python.exe")
-    : path.join(process.cwd(), ".venv", "bin", "python");
+    : "python3"
 }
 
 const LOG = "[balancete]";
