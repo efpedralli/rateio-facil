@@ -71,7 +71,7 @@ export async function PATCH(req: NextRequest) {
       },
     });
 
-    await writeAudit(AuditEvent.USER_ROLE_CHANGED, {
+    await writeAudit(prisma, AuditEvent.USER_ROLE_CHANGED, {
       userId: session.user.id,
       ip: getClientIp(req),
       userAgent: getUserAgent(req),

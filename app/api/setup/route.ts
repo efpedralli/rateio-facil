@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  await writeAudit(AuditEvent.USER_CREATED, {
+  await writeAudit(prisma, AuditEvent.USER_CREATED, {
     userId: admin.id,
     ip,
     userAgent,

@@ -67,7 +67,7 @@ export async function authenticateCredentials(
   ]);
 
   if (ipBlockedUntil || emailBlockedUntil) {
-    await writeAudit(AuditEvent.LOGIN_FAIL, {
+    await writeAudit(prisma, AuditEvent.LOGIN_FAIL, {
       ip,
       userAgent,
       metadata: { reason: "rate_limited", email },

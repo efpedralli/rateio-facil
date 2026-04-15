@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await writeAudit(AuditEvent.INVITE_CREATED, {
+    await writeAudit(prisma, AuditEvent.INVITE_CREATED, {
       userId: session.user.id,
       ip: getClientIp(req),
       userAgent: getUserAgent(req),

@@ -5,6 +5,7 @@ import { getTenantContext } from "@/lib/multitenant";
 import { writeAudit } from "@/lib/audit";
 import { getClientIp, getUserAgent } from "@/lib/request";
 
+
 export const runtime = "nodejs";
 
 const RESET_TOKEN_BYTES = 32;
@@ -21,6 +22,7 @@ export async function POST(req: NextRequest) {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const ip = getClientIp(req);
   const userAgent = getUserAgent(req);
+  const { prisma } = await getTenantContext();
 
   let devResetLink: string | null = null;
 
@@ -58,7 +60,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  await writeAudit(AuditEvent.PASSWORD_RESET_REQUEST, {
+  await writeAudit(prisma, AuditEvent.PASSWORD_RESET_REQUEST, {
     userId: auditedUserId,
     ip,
     userAgent,

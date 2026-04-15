@@ -79,14 +79,14 @@ export async function POST(req: NextRequest) {
     return created;
   });
 
-  await writeAudit(AuditEvent.INVITE_USED, {
+  await writeAudit(prisma, AuditEvent.INVITE_USED, {
     userId: user.id,
     ip,
     userAgent,
     metadata: { inviteId: inviteToken.id, role: inviteToken.role },
   });
 
-  await writeAudit(AuditEvent.USER_CREATED, {
+  await writeAudit(prisma, AuditEvent.USER_CREATED, {
     userId: user.id,
     ip,
     userAgent,
