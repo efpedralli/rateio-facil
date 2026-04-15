@@ -1,4 +1,3 @@
-// lib/tenant-resolver.ts
 import { controlPool } from "./control-db";
 
 export type TenantConfig = {
@@ -26,23 +25,35 @@ export type TenantConfig = {
   active: boolean;
 };
 
-const LOCAL_FALLBACK_HOST = "dupliquedesembargador.nyaia.ia.br";
+const LOCAL_FALLBACK_HOST: string | null = null;
 
-function normalizeHost(host?: string | null) {
+function normalizeHost(host?: string | null): string {
   if (!host) return "";
   return host.split(":")[0].trim().toLowerCase();
 }
 
+function resolveEffectiveHost(rawHost?: string | null): string | null {
+  const normalized = normalizeHost(rawHost);
+
+  if (normalized) {
+    return normalized;
+  }
+
+  if (process.env.NODE_ENV === "development") {
+    return LOCAL_FALLBACK_HOST;
+  }
+
+  return null;
+}
+
 const tenantCache = new Map<string, TenantConfig>();
 
-export async function getTenantByHost(rawHost?: string | null) {
-  const host = normalizeHost(rawHost);
-  if (!host) return null;
+export async function getTenantByHost(rawHost?: string | null): Promise<TenantConfig | null> {
+  const effectiveHost = resolveEffectiveHost(rawHost);
 
-  const effectiveHost =
-    host === "localhost" || host === "127.0.0.1"
-      ? LOCAL_FALLBACK_HOST
-      : host;
+  if (!effectiveHost) {
+    return null;
+  }
 
   const cached = tenantCache.get(effectiveHost);
   if (cached) return cached;
@@ -59,22 +70,25 @@ export async function getTenantByHost(rawHost?: string | null) {
   );
 
   const tenant = rows[0] ?? null;
-  if (tenant) tenantCache.set(effectiveHost, tenant);
+
+  if (tenant) {
+    tenantCache.set(effectiveHost, tenant);
+  }
 
   return tenant;
 }
 
-export function clearTenantCache(host?: string) {
+export function clearTenantCache(host?: string | null): void {
   if (!host) {
     tenantCache.clear();
     return;
   }
 
-  const normalized = normalizeHost(host);
-  const effectiveHost =
-    normalized === "localhost" || normalized === "127.0.0.1"
-      ? LOCAL_FALLBACK_HOST
-      : normalized;
+  const effectiveHost = resolveEffectiveHost(host);
+
+  if (!effectiveHost) {
+    return;
+  }
 
   tenantCache.delete(effectiveHost);
 }

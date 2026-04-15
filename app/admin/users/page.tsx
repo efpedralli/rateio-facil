@@ -32,7 +32,7 @@ async function createInviteAction() {
     },
   });
 
-  await writeAudit(AuditEvent.INVITE_CREATED, {
+  await writeAudit(prisma, AuditEvent.INVITE_CREATED, {
     userId: session.user.id,
     ip: getClientIp(hdrs),
     userAgent: getUserAgent(hdrs),
@@ -63,9 +63,13 @@ export default async function AdminUsersPage({ searchParams }: AdminUsersPagePro
     },
     orderBy: { createdAt: "asc" },
   });
+const baseUrl = typeof window !== "undefined"
+  ? window.location.origin
+  : "";
+
 
   const inviteUrl = inviteToken
-    ? `${process.env.NEXTAUTH_URL ?? ""}/invite?token=${encodeURIComponent(inviteToken)}`
+    ? `${baseUrl}/invite?token=${encodeURIComponent(inviteToken)}`
     : null;
 
   return (

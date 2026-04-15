@@ -21,7 +21,7 @@ function runPythonParser(pdfAbsPath: string): Promise<ParsedPdf> {
   return new Promise((resolve, reject) => {
     const py = process.platform === "win32"
       ? path.join(process.cwd(), ".venv", "Scripts", "python.exe")
-      : path.join(process.cwd(), ".venv", "bin", "python");
+      : "python3";
 
     const script = path.join(process.cwd(), "scripts", "parse_rateio_pdf.py");
 

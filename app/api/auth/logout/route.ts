@@ -22,13 +22,32 @@ function getSessionToken(req: NextRequest): string | null {
   return null;
 }
 
+function getPublicBaseUrl(req: Request) {
+  const envBase = process.env.NEXTAUTH_URL?.trim();
+  if (envBase) return envBase.replace(/\/+$/, "");
+
+  const xfProto = req.headers.get("x-forwarded-proto");
+  const xfHost = req.headers.get("x-forwarded-host");
+  const host = xfHost || req.headers.get("host");
+
+  const proto = xfProto || "https";
+
+  if (!host) {
+    throw new Error("Host não encontrado");
+  }
+
+  return `${proto}://${host}`;
+}
+
+
+
 export async function POST(req: NextRequest) {
   const { prisma } = await getTenantContext();
   const session = await getAuthSession(prisma);
   const sessionToken = getSessionToken(req);
   const ip = getClientIp(req);
   const userAgent = getUserAgent(req);
-
+const baseUrl = getPublicBaseUrl(req);
   if (sessionToken) {
     await prisma.session.deleteMany({
       where: { sessionToken },
@@ -36,14 +55,14 @@ export async function POST(req: NextRequest) {
   }
 
   if (session?.user?.id) {
-    await writeAudit(AuditEvent.LOGOUT, {
+    await writeAudit(prisma, AuditEvent.LOGOUT, {
       userId: session.user.id,
       ip,
       userAgent,
     });
   }
 
-  const response = NextResponse.redirect(new URL("/login", req.url));
+  const response = NextResponse.redirect(new URL("/login", baseUrl));
   for (const name of SESSION_COOKIE_CANDIDATES) {
     response.cookies.set({
       name,

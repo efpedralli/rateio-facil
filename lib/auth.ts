@@ -77,7 +77,7 @@ export async function authenticateCredentials(
 
   if (!email || !password) {
     await registerFailedAttempt();
-    await writeAudit(AuditEvent.LOGIN_FAIL, {
+    await writeAudit(prisma, AuditEvent.LOGIN_FAIL, {
       ip,
       userAgent,
       metadata: { reason: "missing_credentials", email },
@@ -88,7 +88,7 @@ export async function authenticateCredentials(
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user || !user.isActive) {
     await registerFailedAttempt();
-    await writeAudit(AuditEvent.LOGIN_FAIL, {
+    await writeAudit(prisma, AuditEvent.LOGIN_FAIL, {
       ip,
       userAgent,
       metadata: { reason: "invalid_credentials", email },
@@ -97,7 +97,7 @@ export async function authenticateCredentials(
   }
 
   if (user.lockedUntil && user.lockedUntil > now) {
-    await writeAudit(AuditEvent.LOGIN_FAIL, {
+    await writeAudit(prisma, AuditEvent.LOGIN_FAIL, {
       userId: user.id,
       ip,
       userAgent,
@@ -123,7 +123,7 @@ export async function authenticateCredentials(
       },
     });
 
-    await writeAudit(AuditEvent.LOGIN_FAIL, {
+    await writeAudit(prisma, AuditEvent.LOGIN_FAIL, {
       userId: user.id,
       ip,
       userAgent,
@@ -146,7 +146,7 @@ export async function authenticateCredentials(
     }),
   ]);
 
-  await writeAudit(AuditEvent.LOGIN_SUCCESS, {
+  await writeAudit(prisma, AuditEvent.LOGIN_SUCCESS, {
     userId: user.id,
     ip,
     userAgent,
@@ -215,7 +215,7 @@ export function createAuthOptions(prisma: PrismaClient): NextAuthOptions {
       async signOut(message) {
         const session = "session" in message ? message.session : undefined;
         if (!session) return;
-        await writeAudit(AuditEvent.LOGOUT, {
+        await writeAudit(prisma, AuditEvent.LOGOUT, {
           metadata: { email: session.user?.email ?? null },
         });
       },

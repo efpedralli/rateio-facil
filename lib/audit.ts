@@ -1,4 +1,4 @@
-import { AuditEvent, Prisma, prisma } from "@/lib/prisma";
+import type { PrismaClient, AuditEvent, Prisma } from "@prisma/client";
 
 type WriteAuditInput = {
   userId?: string | null;
@@ -7,7 +7,11 @@ type WriteAuditInput = {
   metadata?: Prisma.InputJsonValue;
 };
 
-export async function writeAudit(event: AuditEvent, input: WriteAuditInput = {}) {
+export async function writeAudit(
+  prisma: PrismaClient,
+  event: AuditEvent,
+  input: WriteAuditInput = {}
+) {
   await prisma.auditLog.create({
     data: {
       event,

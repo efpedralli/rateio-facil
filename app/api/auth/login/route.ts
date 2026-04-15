@@ -16,12 +16,29 @@ function safeCallbackUrl(input: string): string {
   return "/dashboard";
 }
 
+function getPublicBaseUrl(req: Request) {
+  const envBase = process.env.NEXTAUTH_URL?.trim();
+  if (envBase) return envBase.replace(/\/+$/, "");
+
+  const xfProto = req.headers.get("x-forwarded-proto");
+  const xfHost = req.headers.get("x-forwarded-host");
+  const host = xfHost || req.headers.get("host");
+
+  const proto = xfProto || "https";
+
+  if (!host) {
+    throw new Error("Host não encontrado");
+  }
+
+  return `${proto}://${host}`;
+}
+
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
   const email = String(formData.get("email") ?? "");
   const password = String(formData.get("password") ?? "");
   const callbackUrl = safeCallbackUrl(String(formData.get("callbackUrl") ?? "/dashboard"));
-
+const baseUrl = getPublicBaseUrl(req);
   const { prisma } = await getTenantContext();
   const authenticated = await authenticateCredentials(prisma, {
     email,
@@ -30,7 +47,7 @@ export async function POST(req: NextRequest) {
   });
 
   if (!authenticated) {
-    const redirectUrl = new URL("/login", req.url);
+const redirectUrl = new URL("/login", baseUrl);
     redirectUrl.searchParams.set("error", "Invalid credentials");
     redirectUrl.searchParams.set("callbackUrl", callbackUrl);
     return NextResponse.redirect(redirectUrl);
@@ -41,6 +58,7 @@ export async function POST(req: NextRequest) {
 
   await prisma.session.create({
     data: {
+      id: crypto.randomUUID(),
       sessionToken,
       userId: authenticated.id,
       expires,
@@ -51,7 +69,7 @@ export async function POST(req: NextRequest) {
     ? "/dashboard"
     : callbackUrl;
 
-  const response = NextResponse.redirect(new URL(resolvedCallbackUrl, req.url));
+  const response = NextResponse.redirect(new URL(resolvedCallbackUrl, baseUrl));
   response.cookies.set({
     name: SESSION_COOKIE_NAME,
     value: sessionToken,
