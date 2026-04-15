@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/uploads/balancetes
+/scripts/balancete/__pycache__

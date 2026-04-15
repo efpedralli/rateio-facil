@@ -17,6 +17,9 @@ _HEADER_RULES: List[Tuple[str, str]] = [
     (r"^despesas\b", "DESPESAS"),
     (r"^resumo\b", "RESUMO"),
     (r"^saldo\s+anterior\b", "CONTAS"),
+    # Orçamento / previsão (Aires): "Valores rateados na taxa de condomínio" => tratar como DESPESAS
+    (r"^valores\s+rateados\s+na\s+taxa\s+de\s+condom[ií]nio\b", "DESPESAS"),
+    (r"^classe\s+da\s+conta\s+valor\b", "DESPESAS"),
 ]
 
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import os
 import sys
 import unicodedata
 from pathlib import Path
@@ -14,6 +15,8 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from openpyxl import Workbook
 from openpyxl.styles import Border, Font, Side
+
+from text_repair import normalize_extracted_text
 
 DEC_FMT = "#,##0.00"
 FONT_NAME = "Tahoma"
@@ -366,6 +369,145 @@ def normalize_group_title(section: str, raw_group: str) -> str:
         return f"(-) {collapsed.upper()}"
     return collapsed.upper()
 
+_RE_RS_ENDS_LINE = re.compile(r"(?is)\bR\$\s*[\d\.\s\u00a0]*,\d{2}\s*$")
+_RE_INVALID_GROUP_PREFIX = re.compile(r"(?is)^\(\-\)\s*DO\b")
+_RE_HAS_GARBLED_CHAR = re.compile(r"[\ufffd]")
+_GROUP_STOPWORDS = frozenset(
+    {
+        "do",
+        "da",
+        "de",
+        "dos",
+        "das",
+        "e",
+        "em",
+        "no",
+        "na",
+        "nos",
+        "nas",
+        "a",
+        "o",
+        "as",
+        "os",
+    }
+)
+_GROUP_GENERIC = frozenset(
+    {
+        "condominio",
+        "condomínio",
+        "condominio)",
+        "condomínio)",
+    }
+)
+
+_DEBUG_REJECT = os.getenv("SEENS_DEBUG_GROUP_REJECT", "").strip() not in ("", "0", "false", "False")
+
+_KNOWN_REAL_GROUPS = frozenset(
+    {
+        "encargos sociais / impostos / taxas",
+        "manutenção e conservação",
+        "serviços públicos",
+        "serviços financeiros",
+        "despesas administrativas",
+        "despesas extraordinárias",
+        "outros",
+        # grupos comuns
+        "receitas",
+        "despesas",
+    }
+)
+_KNOWN_REAL_GROUPS_NORM = frozenset(_norm_key(x) for x in _KNOWN_REAL_GROUPS)
+_INVALID_GROUP_EXACT = frozenset(
+    {
+        "do condominio",
+        "do condomínio",
+        "do condominio)",
+        "do condomínio)",
+        "mercado do condominio",
+        "mercado do condomínio",
+        "automatico",
+        "automático",
+        "debito automatico",
+        "débito automático",
+        "facil",
+        "fácil",
+        "condominio",
+        "condomínio",
+        "condominio)",
+        "condomínio)",
+    }
+)
+_RE_STARTS_WITH_PREP = re.compile(r"(?is)^(?:DO|DA|DE)\b")
+_RE_SIG_PREFIX = re.compile(r"(?is)^\(\+\)\s*|^\(\-\)\s*")
+
+
+def _sanitize_group_title(s: str) -> str:
+    # Sanitização obrigatória + reparo (nunca substituir silenciosamente por '�')
+    return normalize_extracted_text(s or "", warn_context="export_group_title")
+
+
+def _useful_letters_count(s: str) -> int:
+    return sum(1 for c in (s or "") if c.isalpha())
+
+
+def _relevant_words(s: str) -> List[str]:
+    """Palavras relevantes: remove preposições/stopwords e genéricos como CONDOMINIO."""
+    t = _sanitize_group_title(_strip_accents(s).lower())
+    parts = [p for p in re.split(r"[^a-z0-9]+", t) if p]
+    out: List[str] = []
+    for p in parts:
+        if p in _GROUP_STOPWORDS:
+            continue
+        if p in _GROUP_GENERIC:
+            continue
+        out.append(p)
+    return out
+
+
+def _is_valid_section_title_candidate(title: str) -> bool:
+    """
+    Regras obrigatórias (export):
+    - não aceitar vazio/quase vazio
+    - letras úteis >= 5
+    - >2 palavras relevantes
+    - não terminar com valor monetário
+    - não ser TOTAL
+    - bloquear padrões inválidos como '(-) DO ...'
+    - bloquear ruído corrompido sem estrutura
+    """
+    t = _sanitize_group_title(title)
+    if not t:
+        return False
+    # Remove prefixos "(+)" / "(-)" para validação semântica
+    t_plain = _RE_SIG_PREFIX.sub("", t).strip()
+    if _useful_letters_count(t) < 5:
+        return False
+    if _RE_INVALID_GROUP_PREFIX.match(t):
+        return False
+    if t.strip().upper() == "TOTAL":
+        return False
+    if _RE_RS_ENDS_LINE.search(t):
+        return False
+    low_plain = _norm_key(t_plain)
+    if low_plain in _INVALID_GROUP_EXACT:
+        return False
+    if _RE_STARTS_WITH_PREP.match(t_plain.strip()):
+        return False
+    # Aceitar títulos conhecidos (mesmo com 1 palavra, ex.: OUTROS)
+    if low_plain in _KNOWN_REAL_GROUPS_NORM:
+        return True
+    # Relevância mínima (evita preposição/substantivo genérico isolado).
+    rel = _relevant_words(t_plain)
+    if len(rel) < 2:
+        return False
+    # Bloqueia casos tipo "DO CONDOMINIO" / "CONDOMINIO)" isolados
+    if low_plain in ("do condominio", "do condomínio", "condominio", "condomínio", "condominio)", "condomínio)"):
+        return False
+    # Só preposição + substantivo genérico
+    if re.fullmatch(r"(?is)(?:DO|DA|DE)\s+(?:CONDOM[IÍ]NIO\)?)", t_plain.strip()):
+        return False
+    return True
+
 
 _RE_DATE_LEAD = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}\s+")
 _RE_RS_TAIL = re.compile(r"\s+R\$\s*[\d\.\s\u00a0]*,\d{2}\s*$", re.IGNORECASE)
@@ -461,6 +603,17 @@ def _ordered_groups(
         )
         if _should_skip_group(sec, grp):
             continue
+        # Não criar "seção" a partir de ruído/linhas inválidas
+        # (ex.: "(-) DO CONDOMINIO)" ou linhas quase vazias/corrompidas)
+        candidate = normalize_group_title(sec, grp)
+        norm = _sanitize_group_title(candidate)
+        if not _is_valid_section_title_candidate(norm):
+            if _DEBUG_REJECT:
+                print(
+                    f"[DEBUG] reject_group_key sec={sec!r} raw_group={grp!r} norm={norm!r}",
+                    file=sys.stderr,
+                )
+            continue
         key = (sec, grp)
         if key not in groups:
             groups[key] = []
@@ -555,7 +708,10 @@ def export_to_excel(data: dict, output_path: str) -> str:
         sec, grp = key
         block = groups.get(key, [])
         title = normalize_group_title(sec, grp)
-        write_section_header(title)
+        title = _sanitize_group_title(title)
+        if not _is_valid_section_title_candidate(title):
+            # FALLBACK: se não for válida como seção, ignorar completamente (não cria bloco)
+            continue
 
         item_rows: List[Dict[str, Any]] = []
         for e in block:
@@ -567,15 +723,24 @@ def export_to_excel(data: dict, output_path: str) -> str:
             d = _str(e.get("descricao") or e.get("Descricao") or e.get("description"))
             if _is_aggregate_line(d):
                 continue
+            # Regra: não considerar item sem valor numérico real
+            if _num(e.get("valor") or e.get("Valor")) is None:
+                continue
             item_rows.append(e)
 
+        # APÓS TOTAL / quebra de bloco: não iniciar nova seção automaticamente se não há conteúdo real
+        if not item_rows:
+            continue
+
+        write_section_header(title)
         total = 0.0
         for e in item_rows:
             raw_desc = _str(e.get("descricao") or e.get("Descricao") or e.get("description"))
             desc = clean_item_description(raw_desc)
             val = _num(e.get("valor") or e.get("Valor"))
+            # Regra: nunca exportar registro sem valor numérico real.
             if val is None:
-                val = 0.0
+                continue
             total += val
             dc = ws.cell(row=row, column=3, value=desc or None)
             _apply_cell_style(dc)
@@ -629,7 +794,7 @@ def export_to_excel(data: dict, output_path: str) -> str:
         write_section_header(
             "RESUMO DAS CONTAS - POSIÇÃO CONSOLIDADA DA CONTA PESSOA JURÍDICA - SICREDI"
         )
-        write_section_header(banner)
+        write_section_header('LANÇAMENTOS')
         for acc in accounts:
             if not isinstance(acc, Mapping):
                 continue
