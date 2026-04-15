@@ -322,6 +322,11 @@ def tokenize(lines: List[str]) -> List[Dict[str, Any]]:
         spans = reliable_comma_money_spans(raw)
         valor, strat = _select_initial_valor_from_spans(raw, spans)
         has_currency = "R$" in raw or "r$" in raw
+        alpha_count = sum(1 for c in raw if c.isalpha())
+        money_first_start = spans[0][1] if spans else None
+        money_last_end = spans[-1][2] if spans else None
+        money_at_start = bool(spans) and spans[0][1] <= 1
+        money_at_end = bool(spans) and raw[spans[-1][2] :].strip() == ""
         out.append(
             {
                 "raw": raw,
@@ -329,6 +334,11 @@ def tokenize(lines: List[str]) -> List[Dict[str, Any]]:
                 "valor": valor,
                 "money_count": len(spans),
                 "has_currency": has_currency,
+                "alpha_count": alpha_count,
+                "money_first_start": money_first_start,
+                "money_last_end": money_last_end,
+                "money_at_start": money_at_start,
+                "money_at_end": money_at_end,
                 "is_upper": _is_mostly_upper(raw),
                 "block": "UNKNOWN",
                 "type": None,

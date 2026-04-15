@@ -55,23 +55,27 @@ def _build_canonical(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
         if tl == "TITULO":
             continue
         if fase == "RESUMO_MES":
-            resumo_items.append(
-                {"label": str(e.get("descricao") or ""), "valor": float(e.get("valor") or 0)}
-            )
+            if e.get("valor") is None:
+                continue
+            resumo_items.append({"label": str(e.get("descricao") or ""), "valor": float(e.get("valor"))})
             continue
         if sm == "RECEITAS" and tl != "TITULO":
+            if e.get("valor") is None:
+                continue
             rec_g[grupo].append(
                 {
                     "descricao": str(e.get("descricao") or ""),
-                    "valor": float(e.get("valor") or 0),
+                    "valor": float(e.get("valor")),
                     "rawLine": e.get("linhaOriginal"),
                 }
             )
         elif sm == "DESPESAS" and tl != "TITULO":
+            if e.get("valor") is None:
+                continue
             des_g[grupo].append(
                 {
                     "descricao": str(e.get("descricao") or ""),
-                    "valor": float(e.get("valor") or 0),
+                    "valor": float(e.get("valor")),
                     "rawLine": e.get("linhaOriginal"),
                 }
             )

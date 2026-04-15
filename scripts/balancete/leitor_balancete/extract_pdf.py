@@ -5,6 +5,8 @@ from typing import List
 
 import pdfplumber
 
+from ..text_repair import normalize_extracted_text
+
 
 def extract_pages_text(path: Path) -> List[str]:
     """Extrai texto página a página (preserva ordem de leitura do PDF)."""
@@ -12,7 +14,9 @@ def extract_pages_text(path: Path) -> List[str]:
     with pdfplumber.open(path) as pdf:
         for page in pdf.pages:
             t = page.extract_text()
-            texts.append(t or "")
+            texts.append(
+                normalize_extracted_text(t or "", warn_context=f"{path.name}:page{page.page_number}")
+            )
     return texts
 
 

@@ -39,6 +39,15 @@ export function normalizeText(line: string): string {
     .trim();
 }
 
+const RE_TRAILING_RS_MONEY = /\s+R\$\s*[\d.\s\u00a0-]*,\d{2}\s*$/i;
+
+export function stripTrailingMoneyFromDesc(line: string): string {
+  // Remove " ... R$ 16,00" no final da descrição (valor já existe no campo `valor`)
+  // Sem mexer em números no meio da frase.
+  const t = normalizeText(line ?? "");
+  return t.replace(RE_TRAILING_RS_MONEY, "").trim();
+}
+
 export function parseBrazilianCurrencyToken(token: string): number | null {
   const t = token.trim();
   if (!/^-?\d{1,3}(?:\.\d{3})*,\d{2}$/.test(t) && !/^-?\d+,\d{2}$/.test(t)) {
@@ -76,7 +85,7 @@ function coerceEntry(raw: unknown): BalanceteEntry | null {
     grupoOrigem: String(o.grupoOrigem ?? "GERAL"),
     data: o.data == null ? null : String(o.data),
     fornecedor: o.fornecedor == null ? null : String(o.fornecedor),
-    descricao: repairMojibakeText(String(o.descricao ?? "")),
+    descricao: stripTrailingMoneyFromDesc(repairMojibakeText(String(o.descricao ?? ""))),
     valor: Math.abs(valor),
     sinal,
     tipoLinha: tipoLinha as BalanceteEntry["tipoLinha"],
