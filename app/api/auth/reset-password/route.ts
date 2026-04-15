@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
     }),
   ]);
 
-  await writeAudit(AuditEvent.PASSWORD_RESET_SUCCESS, {
+  await writeAudit(prisma, AuditEvent.PASSWORD_RESET_SUCCESS, {
     userId: resetToken.userId,
     ip,
     userAgent,
